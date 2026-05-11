@@ -1,5 +1,5 @@
 {
-  "comment": "Example models.json for Caravel — llama.cpp + LM Studio",
+  "comment": "Example: llama.cpp for coding agents + lm-studio for the designer",
   "providers": {
     "llama.cpp": {
       "baseUrl": "http://10.74.74.151:9090/v1",

@@ -1,5 +1,5 @@
 {
-  "comment": "Example models.json for Caravel — Docker only",
+  "comment": "Example: using Docker-hosted models for all agents",
   "providers": {
     "docker-models": {
       "baseUrl": "http://localhost:12434/v1",

@@ -1,5 +1,5 @@
 {
-  "comment": "Example models.json for Caravel — Ollama only",
+  "comment": "Example: using Ollama as the provider for all agents",
   "providers": {
     "ollama": {
       "baseUrl": "http://10.74.74.151:11434/v1",
