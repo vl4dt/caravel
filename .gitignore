@@ -7,3 +7,9 @@ Thumbs.db
 
 # User-specific config (never commit)
 *.local.json
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+.beads/
+*.db
+.beads-credential-key
