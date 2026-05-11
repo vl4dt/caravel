@@ -101,7 +101,7 @@ let fleetState: FleetState = {
   currentPhaseIndex: 0,
   activeAgents: [],
   paused: false,
-  startTime: 0,
+  startTime: Date.now(),
   reviewIterations: 0,
   maxReviewIterations: 5,
   recentOutput: "",
@@ -124,6 +124,9 @@ let widgetLines: string[] = [];
 
 // Process tracking
 const activeProcesses = new Map<string, { proc: ReturnType<typeof spawn>; signal: AbortSignal }>();
+
+// Module-level reference to pi (needed by saveState/loadState)
+let _pi: ExtensionAPI | null = null;
 
 // ============================================================================
 // Agent Discovery
@@ -256,7 +259,9 @@ function getPiInvocation(args: string[]): { command: string; args: string[] } {
 // ============================================================================
 
 function saveState(): void {
-  pi.appendEntry("caravel-state", fleetState);
+  if (_pi) {
+    _pi.appendEntry("caravel-state", fleetState);
+  }
 }
 
 function loadState(ctx: ExtensionContext): void {
@@ -902,12 +907,13 @@ function openDashboard(ctx: ExtensionContext): void {
 // ============================================================================
 
 export default function (pi: ExtensionAPI) {
+  _pi = pi;
   // ---- Events ----
 
   pi.on("session_start", async (_event, ctx) => {
     loadState(ctx);
     refreshWidget(ctx);
-    pi.setWorkingVisible(false);
+    ctx.ui.setWorkingVisible(false);
     startWidgetRefresh(ctx);
 
     ctx.ui.notify("Caravel fleet initialized", "info");
