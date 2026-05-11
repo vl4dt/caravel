@@ -2,12 +2,33 @@
   "name": "caravel",
   "version": "0.1.0",
   "description": "Fleet orchestration for Pi - multi-agent team with local-only models",
-  "keywords": ["pi-package"],
+  "main": "extensions/caravel.ts",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/<YOUR_USERNAME>/caravel.git"
+  },
+  "homepage": "https://github.com/<YOUR_USERNAME>/caravel",
+  "bugs": {
+    "url": "https://github.com/<YOUR_USERNAME>/caravel/issues"
+  },
+  "keywords": ["pi-package", "pi-coding-agent", "multi-agent", "fleet", "orchestration"],
   "pi": {
     "extensions": ["./extensions"],
     "agents": ["./agents"],
     "skills": ["./skills"],
     "prompts": ["./prompts"]
   },
-  "dependencies": {}
+  "dependencies": {},
+  "author": "",
+  "license": "MIT",
+  "files": [
+    "extensions/",
+    "agents/",
+    "skills/",
+    "prompts/",
+    "SKILL.md",
+    "README.md",
+    "package.json",
+    "LICENSE"
+  ]
 }
