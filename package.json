@@ -1,7 +1,7 @@
 {
   "name": "caravel",
   "version": "0.1.0",
-  "description": "Fleet orchestration for Pi — multi-agent team with local-only models. Two-stage review (code quality + design review), automated fix loops, and a fleet dashboard.",
+  "description": "Fleet orchestration for Pi — multi-agent software development with supervisor-worker pattern, two-stage review loops, and a fleet dashboard. Works with any model provider.",
   "main": "extensions/caravel.ts",
   "repository": {
     "type": "git",
@@ -18,7 +18,8 @@
     "fleet",
     "orchestration",
     "supervisor",
-    "local-ai"
+    "review-loop",
+    "two-stage-review"
   ],
   "pi": {
     "extensions": [

@@ -4,9 +4,11 @@ description: UI/UX design specialist with vision capabilities. Analyzes screensh
 # Change this to a model ID that exists in your ~/.pi/agent/models.json
 # This agent needs a vision-capable model (supports image input).
 # Examples:
-#   lm-studio/google/gemma-4-e4b       (LM Studio — vision capable)
-#   ollama/gemma4:e4b                   (Ollama — vision capable)
-#   docker-models/docker.io/ai/glm-4.7-flash:32k  (Docker — vision capable)
+#   lm-studio/google/gemma-4-e4b       (LM Studio — vision)
+#   ollama/gemma4:e4b                   (Ollama — vision)
+#   openai/gpt-4o                       (OpenAI — vision)
+#   google/gemini-pro-vision            (Google — vision)
+#   docker-models/docker.io/ai/glm-4.7-flash:32k  (Docker — vision)
 # The format is: <provider-name>/<model-id>
 model: lm-studio/google/gemma-4-e4b
 tools: read,bash,grep,find,ls

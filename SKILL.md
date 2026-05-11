@@ -26,13 +26,13 @@ Main Agent --> supervisor routing     |
 
 ## Fleet Composition
 
-| Agent | Model | Role |
-|-------|-------|------|
-| **developer** | llama.cpp Qwen3.6-35B-A3B | Coding, implementation, file manipulation |
-| **tech-lead** | llama.cpp Qwen3.6-35B-A3B | Architecture, planning, code quality review |
-| **designer** | lm-studio Gemma 4 vision | Visual review, UI analysis, design quality |
+| Agent | Role |
+|-------|------|
+| **developer** | Coding, implementation, file manipulation |
+| **tech-lead** | Architecture, planning, code quality review |
+| **designer** | Visual review, UI analysis, design quality |
 
-All models run locally. No cloud dependencies.
+Each agent's model is configurable in its `agents/*.md` file — works with any provider (local or cloud).
 
 ## How It Works
 

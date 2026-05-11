@@ -3,8 +3,10 @@ name: developer
 description: Senior implementation specialist with full file system access. Writes, edits, and builds code according to specifications and review feedback.
 # Change this to a model ID that exists in your ~/.pi/agent/models.json
 # Examples:
-#   llama.cpp/Qwen/Qwen3.6-35B-A3B-GGUF:Q8_0   (llama.cpp server)
+#   llama.cpp/Qwen/Qwen3.6-35B-A3B-GGUF:Q8_0   (llama.cpp)
 #   ollama/qwen3:8b                              (Ollama)
+#   openai/gpt-4o                                (OpenAI)
+#   anthropic/claude-sonnet-4-5                  (Anthropic)
 #   docker-models/docker.io/ai/qwen3-coder:32k   (Docker)
 # The format is: <provider-name>/<model-id>
 model: llama.cpp/Qwen/Qwen3.6-35B-A3B-GGUF:Q8_0

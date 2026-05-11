@@ -1,6 +1,6 @@
 # Caravel
 
-Fleet orchestration for Pi — multi-agent software development with local-only models.
+Fleet orchestration for Pi — multi-agent software development with supervisor-worker pattern and two-stage review loops.
 
 ## Architecture
 
@@ -20,15 +20,13 @@ Main Agent --> supervisor routing     |
 
 ## Fleet Agents
 
-| Agent | Default Model | Provider | Role |
-|-------|--------------|----------|------|
-| **developer** | Qwen3.6-35B-A3B (Q8_0) | llama.cpp | Coding, implementation, file manipulation |
-| **tech-lead** | Qwen3.6-35B-A3B (Q8_0) | llama.cpp | Architecture, planning, code review |
-| **designer** | Gemma 4 | lm-studio | Visual review, UI analysis, design quality |
+| Agent | Role |
+|-------|------|
+| **developer** | Coding, implementation, file manipulation |
+| **tech-lead** | Architecture, planning, code review |
+| **designer** | Visual review, UI analysis, design quality |
 
-All models run locally. Zero cloud dependencies.
-
-> **All model assignments are configurable** — each agent's `model` field in `agents/*.md` can be changed to any model in your `models.json` (see Configuration below).
+> Each agent's model is configurable — any model in your `models.json` works, regardless of provider.
 
 ## Installation
 
@@ -50,18 +48,18 @@ Each agent in `agents/*.md` has a `model` field that must match a model ID in yo
 
 ```yaml
 # agents/developer.md
-model: llama.cpp/Qwen/Qwen3.6-35B-A3B-GGUF:Q8_0
-#              ^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-#              provider   model ID (must exist in your models.json)
+model: openai/gpt-4o
+#              ^^^^^^^^  ^^^^^^^^^
+#              provider   model ID
 ```
 
 The format is: `<provider-name>/<model-id>` where `provider-name` matches the key in your `models.json` and `model-id` matches one of the models defined under that provider.
 
 ### 2. Your models.json Must Have Matching Entries
 
-The agents reference three providers. Here are example entries for each. Replace the IPs/ports with your own.
+The agents reference three provider types by name. The names are just labels — you can use any provider. Here are examples of common setups:
 
-**llama.cpp** (for developer and tech-lead):
+**llama.cpp** (local inference server):
 ```json
 {
   "llama.cpp": {
@@ -69,14 +67,13 @@ The agents reference three providers. Here are example entries for each. Replace
     "api": "openai-completions",
     "apiKey": "llama.cpp",
     "models": [
-      { "id": "Qwen/Qwen3.6-35B-A3B-GGUF:Q8_0", "name": "Qwen3.6 35B", "contextWindow": 262144 },
-      { "id": "Qwen/Qwen3.6-35B-A3B-GGUF:Q6_K", "name": "Qwen3.6 35B Q6", "contextWindow": 262144 }
+      { "id": "Qwen/Qwen3.6-35B-A3B-GGUF:Q8_0", "contextWindow": 262144 }
     ]
   }
 }
 ```
 
-**lm-studio** (for designer, needs vision-capable model):
+**lm-studio** (local inference server):
 ```json
 {
   "lm-studio": {
@@ -87,17 +84,15 @@ The agents reference three providers. Here are example entries for each. Replace
     "models": [
       {
         "id": "google/gemma-4-e4b",
-        "name": "Gemma 4 Vision",
         "input": ["text", "image"],
-        "contextWindow": 128000,
-        "maxTokens": 4096
+        "contextWindow": 128000
       }
     ]
   }
 }
 ```
 
-**ollama** (alternative provider):
+**Ollama** (local inference server):
 ```json
 {
   "ollama": {
@@ -112,29 +107,46 @@ The agents reference three providers. Here are example entries for each. Replace
 }
 ```
 
+**Docker** (Docker-hosted inference server):
+```json
+{
+  "docker-models": {
+    "baseUrl": "http://localhost:12434/v1",
+    "api": "openai-completions",
+    "apiKey": "not-needed",
+    "models": [
+      { "id": "docker.io/ai/qwen3-coder:32k" }
+    ]
+  }
+}
+```
+
+**Cloud providers** (OpenAI, Anthropic, Google, etc.) also work — just configure them in your `models.json` and reference them the same way.
+
 ### 3. Verify It Works
 
 After configuring `models.json`, list available models:
 
 ```bash
-pi --list-models llama.cpp
-pi --list-models lm-studio
+pi --list-models
 ```
 
 Then in your session, the caravel extension will auto-discover agents from `.pi/agents/` and use the models you've assigned.
 
 ### Need a Different Setup?
 
-You can use any provider combination. Here are some common patterns:
+Any combination works. Here are some patterns:
 
-| Setup | Developer Model | Designer Model |
-|-------|----------------|----------------|
-| llama.cpp only | `llama.cpp/Qwen3:8b` | `llama.cpp/google/gemma-4-e4b` |
-| Ollama only | `ollama/qwen3:8b` | `ollama/gemma4:e4b` |
-| Docker only | `docker-models/docker.io/ai/qwen3-coder:32k` | `docker-models/docker.io/ai/glm-4.7-flash:32k` |
-| Mixed | `llama.cpp/Qwen/...` | `ollama/gemma4:e4b` |
+| Setup | Developer Model | Tech Lead Model | Designer Model |
+|-------|----------------|-----------------|----------------|
+| All local | `llama.cpp/Qwen3:8b` | `llama.cpp/Qwen3:8b` | `lm-studio/gemma-4-e4b` |
+| All Ollama | `ollama/qwen3:8b` | `ollama/qwen3:8b` | `ollama/gemma4:e4b` |
+| All Docker | `docker-models/qwen3-coder:32k` | `docker-models/qwen3-coder:32k` | `docker-models/glm-4.7-flash:32k` |
+| Mixed | `llama.cpp/Qwen3:8b` | `llama.cpp/Qwen3:8b` | `ollama/gemma4:e4b` |
+| Cloud | `openai/gpt-4o` | `openai/gpt-4o` | `openai/gpt-4o-vision` |
+| Any | *your choice* | *your choice* | *your choice* |
 
-Just make sure the designer's model supports image input (`"input": ["text", "image"]`).
+Just make sure the designer's model supports image input (`"input": ["text", "image"]`) for vision-based review.
 
 ## Usage
 
@@ -184,6 +196,10 @@ caravel/
 ├── package.json          # Pi package manifest
 ├── README.md             # This file
 ├── LICENSE
+├── examples/             # Example models.json configurations
+│   ├── models-llama-cpp-lm-studio.json
+│   ├── models-ollama-only.json
+│   └── models-docker-only.json
 ├── extensions/
 │   └── caravel.ts        # Orchestrator (5 tools, dashboard, subagent spawning)
 ├── agents/
@@ -215,10 +231,7 @@ Either stage can return for fixes. The developer auto-fixes and resubmits. Loop 
 
 ### Per-Agent Model Selection
 
-Each agent's model is defined in its `.md` file. The format is `<provider>/<model-id>` matching your `models.json`. This lets you optimize:
-- Coding gets a large reasoning model
-- Vision gets a vision-capable model
-- Each agent type uses whatever model you prefer
+Each agent's model is defined in its `.md` file. The format is `<provider>/<model-id>` matching your `models.json`. You choose whichever provider and model works best for each agent's role.
 
 ### State Persistence
 
