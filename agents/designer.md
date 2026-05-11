@@ -1,6 +1,13 @@
 ---
 name: designer
 description: UI/UX design specialist with vision capabilities. Analyzes screenshots and visual output, ensures design quality and consistency across implementations.
+# Change this to a model ID that exists in your ~/.pi/agent/models.json
+# This agent needs a vision-capable model (supports image input).
+# Examples:
+#   lm-studio/google/gemma-4-e4b       (LM Studio — vision capable)
+#   ollama/gemma4:e4b                   (Ollama — vision capable)
+#   docker-models/docker.io/ai/glm-4.7-flash:32k  (Docker — vision capable)
+# The format is: <provider-name>/<model-id>
 model: lm-studio/google/gemma-4-e4b
 tools: read,bash,grep,find,ls
 ---

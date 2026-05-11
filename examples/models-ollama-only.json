@@ -1,0 +1,26 @@
+{
+  "comment": "Example models.json for Caravel — Ollama only",
+  "providers": {
+    "ollama": {
+      "baseUrl": "http://10.74.74.151:11434/v1",
+      "api": "openai-completions",
+      "apiKey": "ollama",
+      "models": [
+        {
+          "id": "qwen3:8b",
+          "name": "Qwen3 8B",
+          "contextWindow": 128000,
+          "maxTokens": 32768
+        },
+        {
+          "id": "gemma4:e4b",
+          "name": "Gemma 4 Vision",
+          "reasoning": false,
+          "input": ["text", "image"],
+          "contextWindow": 128000,
+          "maxTokens": 4096
+        }
+      ]
+    }
+  }
+}

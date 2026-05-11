@@ -1,0 +1,42 @@
+{
+  "comment": "Example models.json for Caravel — llama.cpp + LM Studio",
+  "providers": {
+    "llama.cpp": {
+      "baseUrl": "http://10.74.74.151:9090/v1",
+      "api": "openai-completions",
+      "apiKey": "llama.cpp",
+      "models": [
+        {
+          "id": "Qwen/Qwen3.6-35B-A3B-GGUF:Q8_0",
+          "name": "Qwen3.6 35B-A3B Q8_0",
+          "contextWindow": 262144,
+          "maxTokens": 262144
+        },
+        {
+          "id": "Qwen/Qwen3.6-35B-A3B-GGUF:Q6_K",
+          "name": "Qwen3.6 35B-A3B Q6_K",
+          "contextWindow": 262144,
+          "maxTokens": 262144
+        }
+      ]
+    },
+    "lm-studio": {
+      "baseUrl": "http://10.74.74.175:1234/v1",
+      "api": "openai-completions",
+      "apiKey": "lmstudio",
+      "compat": {
+        "supportsDeveloperRole": false
+      },
+      "models": [
+        {
+          "id": "google/gemma-4-e4b",
+          "name": "Gemma 4 Vision",
+          "reasoning": false,
+          "input": ["text", "image"],
+          "contextWindow": 128000,
+          "maxTokens": 4096
+        }
+      ]
+    }
+  }
+}

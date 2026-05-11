@@ -1,34 +1,51 @@
 {
   "name": "caravel",
   "version": "0.1.0",
-  "description": "Fleet orchestration for Pi - multi-agent team with local-only models",
+  "description": "Fleet orchestration for Pi — multi-agent team with local-only models. Two-stage review (code quality + design review), automated fix loops, and a fleet dashboard.",
   "main": "extensions/caravel.ts",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/<YOUR_USERNAME>/caravel.git"
+    "url": "git+https://github.com/earendil-works/caravel.git"
   },
-  "homepage": "https://github.com/<YOUR_USERNAME>/caravel",
+  "homepage": "https://github.com/earendil-works/caravel",
   "bugs": {
-    "url": "https://github.com/<YOUR_USERNAME>/caravel/issues"
+    "url": "https://github.com/earendil-works/caravel/issues"
   },
-  "keywords": ["pi-package", "pi-coding-agent", "multi-agent", "fleet", "orchestration"],
+  "keywords": [
+    "pi-package",
+    "pi-coding-agent",
+    "multi-agent",
+    "fleet",
+    "orchestration",
+    "supervisor",
+    "local-ai"
+  ],
   "pi": {
-    "extensions": ["./extensions"],
-    "agents": ["./agents"],
-    "skills": ["./skills"],
-    "prompts": ["./prompts"]
+    "extensions": [
+      "./extensions"
+    ],
+    "agents": [
+      "./agents"
+    ],
+    "skills": [
+      "./skills"
+    ],
+    "prompts": [
+      "./prompts"
+    ]
   },
   "dependencies": {},
-  "author": "",
+  "author": "earendil-works",
   "license": "MIT",
   "files": [
     "extensions/",
     "agents/",
     "skills/",
     "prompts/",
+    "examples/",
     "SKILL.md",
     "README.md",
-    "package.json",
-    "LICENSE"
+    "LICENSE",
+    "package.json"
   ]
 }

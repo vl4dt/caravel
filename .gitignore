@@ -1,0 +1,9 @@
+# Local development artifacts
+node_modules/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# User-specific config (never commit)
+*.local.json

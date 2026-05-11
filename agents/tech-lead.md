@@ -1,6 +1,12 @@
 ---
 name: tech-lead
 description: Architectural planning, code review, and quality assurance specialist. Breaks down projects, reviews implementation, and ensures code quality.
+# Change this to a model ID that exists in your ~/.pi/agent/models.json
+# Examples:
+#   llama.cpp/Qwen/Qwen3.6-35B-A3B-GGUF:Q8_0   (llama.cpp server)
+#   ollama/qwen3:8b                              (Ollama)
+#   docker-models/docker.io/ai/qwen3-coder:32k   (Docker)
+# The format is: <provider-name>/<model-id>
 model: llama.cpp/Qwen/Qwen3.6-35B-A3B-GGUF:Q8_0
 tools: read,bash,grep,find,ls,subagent
 ---

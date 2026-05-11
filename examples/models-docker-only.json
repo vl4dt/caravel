@@ -1,0 +1,26 @@
+{
+  "comment": "Example models.json for Caravel — Docker only",
+  "providers": {
+    "docker-models": {
+      "baseUrl": "http://localhost:12434/v1",
+      "api": "openai-completions",
+      "apiKey": "not-needed",
+      "models": [
+        {
+          "id": "docker.io/ai/qwen3-coder:32k",
+          "name": "Qwen3 Coder 30B",
+          "contextWindow": 32000,
+          "maxTokens": 32000
+        },
+        {
+          "id": "docker.io/ai/glm-4.7-flash:32k",
+          "name": "GLM-4.7 Flash 30B (Vision)",
+          "reasoning": false,
+          "input": ["text", "image"],
+          "contextWindow": 32000,
+          "maxTokens": 32000
+        }
+      ]
+    }
+  }
+}
