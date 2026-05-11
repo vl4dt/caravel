@@ -5,11 +5,11 @@
   "main": "extensions/caravel.ts",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/earendil-works/caravel.git"
+    "url": "git+https://github.com/vl4dt/caravel.git"
   },
-  "homepage": "https://github.com/earendil-works/caravel",
+  "homepage": "https://github.com/vl4dt/caravel",
   "bugs": {
-    "url": "https://github.com/earendil-works/caravel/issues"
+    "url": "https://github.com/vl4dt/caravel/issues"
   },
   "keywords": [
     "pi-package",
@@ -36,7 +36,7 @@
     ]
   },
   "dependencies": {},
-  "author": "earendil-works",
+  "author": "vl4dt",
   "license": "MIT",
   "files": [
     "extensions/",
