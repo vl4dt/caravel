@@ -86,59 +86,36 @@ ctx.ui.setWidget("my-widget", (_tui, theme) => {
 
 This is **already used by the plan-mode extension** for a rich multi-line todo list widget.
 
-## Decision: Hybrid Approach
+## Implementation (Complete)
 
 ### Layer 1: Enhanced Widget Bar (Always Visible)
 
-The widget bar provides always-visible, non-blocking compact status:
-
+Implemented as `buildWidgetLines(ctx)` which returns rich multi-line content:
 ```
-╭── CARAVEL FLEET ──────────────────────────────────╮
-│ P2/4: Core UI  [████░░░░░░░░░░░░░░░░] 60%         │
-│ ▸ Dev: Board.tsx (running)  12/20 tasks · 2m14s   │
-│   Reviews: 3 | Active: Tech-Lead, Developer        │
+╭─ CARAVEL FLEET ──────────────────────────────────╮
+│ P2/4: Core UI  [████████░░░░░░░░░] 60%  ▸
+│ ▸ Dev: Board.tsx (running)  12/20 tasks · 2m14s
 ╰─────────────────────────────────────────────────────╯
 ```
 
-Uses `ctx.ui.setWidget("caravel-fleet", renderFn, { placement: "aboveEditor" })` with a render function for rich content.
+Uses `ctx.ui.setWidget("caravel-fleet", buildWidgetLines(ctx))` — already non-blocking.
 
-### Layer 2: Non-Capturing Detail Overlay (Persistent)
+### Layer 2: Dashboard Overlay (Non-blocking, Persistent)
 
-A rich dashboard overlay for detailed inspection — always visible but **non-blocking**:
-
-```
-┌────────────────────────────────────────────────────────┐
-│  ╭── CARAVEL FLEET DASHBOARD ─────────────────────╮   │
-│  │  [TASKS]  AGENTS  REVIEW  TERMINAL             │   │
-│  │────────────────────────────────────────────────│   │
-│  │ ▸ P2: Core UI [▸ running] (12/20 tasks)        │   │
-│  │   Dev: Board.tsx (+/-)                         │   │
-│  │   TL: Code review                              │   │
-│  │                                                │   │
-│  │ P1: Setup [✓ complete]                         │   │
-│  │ P3: Integration [ ] pending                    │   │
-│  │                                                │   │
-│  │ Active Agents:                                 │   │
-│  │   Developer → Board.tsx (running)              │   │
-│  │   Tech-Lead   → Code review (reviewing)        │   │
-│  │                                                │   │
-│  │ Reviews: 3 | Elapsed: 2m14s | RUNNING          │   │
-│  ╰────────────────────────────────────────────────╯   │
-└────────────────────────────────────────────────────────┘
-```
+Implemented as `DashboardOverlayComponent` rendered via `ctx.ui.custom()` with `onHandle` callback.
 
 Key properties:
-- Positioned: `bottom-right` of terminal (doesn't overlap editor input)
+- Positioned: `bottom-right` of terminal
 - Size: ~60 cols × 60% height
-- `nonCapturing: true` — doesn't steal keyboard focus
-- `onHandle` for visibility toggle
-- Updates on fleet events
+- `onHandle(handle)` for `handle.setHidden()` toggle
+- Updates via `requestRender()` on `agent_end` event
+- Keyboard input passes through to editor (non-blocking)
 
 ### `/fleet` Command Behavior
 
-- **First call**: Shows both widget bar (compact) + overlay (detailed)
-- **Second call**: Hides both (clears widget bar, calls `handle.setHidden(true)`)
-- Third call: Shows again (toggle)
+- **First call**: Shows widget bar + overlay, notifies "Fleet dashboard opened"
+- **Second call**: Hides both, notifies "Fleet dashboard closed"
+- Widget bar remains visible when overlay is hidden (via periodic refresh)
 
 ## Dashboard Content Design
 
