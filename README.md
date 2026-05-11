@@ -30,15 +30,49 @@ Main Agent --> supervisor routing     |
 
 ## Installation
 
-```bash
-# Project-local (recommended)
-pi install -l git:github.com/vl4dt/caravel
+### Install via npm (recommended)
 
-# Or clone and symlink
-git clone https://github.com/vl4dt/caravel.git
-ln -s ./caravel/agents .pi/agents
-ln -s ./caravel/extensions/caravel.ts .pi/extensions/caravel.ts
+```bash
+# Any platform — just one command
+pi install -l npm:caravel
 ```
+
+### Install from GitHub
+
+```bash
+# Clone the repo
+git clone https://github.com/vl4dt/caravel.git
+cd caravel
+```
+
+#### Linux / macOS
+
+```bash
+# Symlink agents and extension into your Pi config
+ln -s "$(pwd)/agents" "$HOME/.pi/agent/agents"
+ln -s "$(pwd)/extensions/caravel.ts" "$HOME/.pi/agent/extensions/caravel.ts"
+```
+
+#### Windows
+
+```powershell
+# Open PowerShell and run these commands from the cloned caravel directory
+
+# Create the agents symlink (requires Admin privileges or Developer Mode enabled)
+New-Item -ItemType SymbolicLink -Path "$env:USERPROFILE\.pi\agent\agents" -Target "$PWD\agents"
+
+# Symlink the extension
+New-Item -ItemType SymbolicLink -Path "$env:USERPROFILE\.pi\agent\extensions\caravel.ts" -Target "$PWD\extensions\caravel.ts"
+```
+
+> **Troubleshooting Windows symlinks:**
+> - Run PowerShell as **Administrator** if you get "Access is denied"
+> - Alternatively, enable Developer Mode: Settings → Privacy & Security → Developer Mode
+> - If you don't have symlink permissions, just **copy** the files instead:
+>   ```powershell
+>   Copy-Item -Recurse agents "$env:USERPROFILE\.pi\agent\agents"
+>   Copy-Item extensions\caravel.ts "$env:USERPROFILE\.pi\agent\extensions\"
+>   ```
 
 ## Configuration
 
@@ -198,8 +232,8 @@ caravel/
 ├── LICENSE
 ├── examples/             # Example models.json configurations
 │   ├── models-llama-cpp-lm-studio.json
-│   ├── models-ollama-only.json
-│   └── models-docker-only.json
+│   ├── models-ollama.json
+│   └── models-docker.json
 ├── extensions/
 │   └── caravel.ts        # Orchestrator (5 tools, dashboard, subagent spawning)
 ├── agents/
