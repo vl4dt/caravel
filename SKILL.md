@@ -208,17 +208,26 @@ Dashboard review panel shows:
 
 ## Fleet Dashboard
 
-Open the fleet dashboard with `/fleet` to see:
-- **TASKS panel**: all phases and their task status
-- **AGENTS panel**: agent status and active assignments
-- **REVIEW panel**: review flow visualization and history
-- **TERMINAL panel**: recent agent output
+The fleet dashboard is **non-blocking** — you can keep typing while watching the fleet.
 
-Keyboard controls in the dashboard:
+Open with `/fleet` (toggles both widget bar and detail overlay):
+- **Widget bar**: Always-visible compact progress bar above the editor
+- **Overlay**: Rich detail panel with tabs (TASKS, AGENTS, REVIEW, TERMINAL)
+
+Keyboard controls in the overlay:
 - Tab / Shift+Tab: switch panels
 - Up/Down: navigate items
-- Enter: select item
 - Space: pause/resume fleet
 - P: skip current phase
-- R: trigger review
-- Esc: close dashboard
+- Esc: close overlay
+
+The widget bar (always visible) shows:
+- Current phase and progress bar
+- Active agents and their tasks
+- Task completion count, review count, elapsed time
+
+The overlay detail panel shows:
+- TASKS: phases with task status, review indicators (+/-)
+- AGENTS: all agents with model info, active agent tasks
+- REVIEW: review iteration count, code/design summary, recent feedback
+- TERMINAL: recent agent output (scrollable with Up/Down)
