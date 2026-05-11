@@ -8,9 +8,10 @@
  *   - Designer/Vision:      lm-studio @ 10.74.74.175:1234 (Gemma 4)
  *
  * UI:
- *   - /fleet command: open fleet dashboard overlay (3 panels)
- *   - Fleet status widget: persistent bar above editor
- *   - Fleet keyboard shortcuts: F (toggle), Tab (panels), Enter (details), Space (pause)
+ *   - /fleet command: toggle fleet dashboard (non-blocking widget bar + overlay)
+ *   - Fleet status widget: persistent bar above editor with rich content
+ *   - Dashboard overlay: non-blocking detail view (bottom-right)
+ *   - Keyboard shortcuts: ↑↓ navigate | Tab: panels | Space: pause | P: skip | Esc: close
  */
 
 import { spawn } from "node:child_process";
@@ -21,10 +22,6 @@ import type { Message } from "@earendil-works/pi-ai";
 import {
   type ExtensionAPI,
   type ExtensionContext,
-  type Focusable,
-  type KeybindingsManager,
-  type TUI,
-  type Component,
   getAgentDir,
   matchesKey,
   truncateHead,
@@ -33,12 +30,6 @@ import {
   DEFAULT_MAX_LINES,
 } from "@earendil-works/pi-coding-agent";
 import {
-  Container,
-  Text,
-  Markdown,
-  Spacer,
-  getMarkdownTheme,
-  CURSOR_MARKER,
   visibleWidth,
   truncateToWidth,
 } from "@earendil-works/pi-tui";
@@ -107,20 +98,12 @@ let fleetState: FleetState = {
   recentOutput: "",
 };
 
-// Dashboard state
-let dashboardOpen = false;
-let dashboardPanel = 0; // 0=tasks, 1=agents, 2=review, 3=terminal
-let dashboardSelectedTask = -1;
-let dashboardSelectedAgent = -1;
-let dashboardSelectedPhase = -1;
-let dashboardTui: TUI | undefined;
-let dashboardDone: ((result: string) => void) | undefined;
+// Non-blocking dashboard state (replaces blocking overlay)
+let dashboardOverlayVisible = false;
+let dashboardOverlayHandle: { setHidden: (hidden: boolean) => void; requestRender: () => void } | null = null;
 let dashboardAbortController: AbortController | undefined;
-let lastDashboardKeys: string[] = [];
-const KEY_HISTORY_SIZE = 100;
 
-// Widget state
-let widgetLines: string[] = [];
+
 
 // Process tracking
 const activeProcesses = new Map<string, { proc: ReturnType<typeof spawn>; signal: AbortSignal }>();
@@ -322,8 +305,13 @@ function refreshWidget(ctx: ExtensionContext): void {
   parts.push(elapsedStr);
   if (fleetState.paused) parts.push("[PAUSED]");
 
-  widgetLines = [` [${parts.join(" | ")}]`];
-  ctx.ui.setWidget("caravel-fleet", widgetLines);
+  // Set widget bar with enhanced multi-line content
+  ctx.ui.setWidget("caravel-fleet", buildWidgetLines(ctx));
+
+  // If overlay is visible, also refresh it
+  if (dashboardOverlayVisible && dashboardOverlayHandle) {
+    dashboardOverlayHandle.requestRender();
+  }
 }
 
 function startWidgetRefresh(ctx: ExtensionContext): void {
@@ -466,86 +454,223 @@ interface DashboardPanel {
   render(ctx: ExtensionContext, theme: any): Component;
 }
 
-class FleetDashboardComponent implements Focusable {
-  readonly width = Math.min(90, 80);
+// ============================================================================
+// Non-blocking dashboard: enhanced widget bar + optional overlay
+// ============================================================================
 
-  focused = false;
+/**
+ * Build rich multi-line content for the widget bar.
+ * Replaces the single-line status bar with a structured, themed widget.
+ */
+function buildWidgetLines(ctx: ExtensionContext): string[] {
+  const th = ctx.ui.theme;
+  const now = Date.now();
+  const elapsed = now - fleetState.startTime;
+  const elapsedStr = formatDuration(elapsed);
 
-  private panelIndex = 0;
+  const totalTasks = fleetState.phases.reduce((s, p) => s + p.tasks.length, 0);
+  const completedTasks = fleetState.phases.reduce(
+    (s, p) => s + p.tasks.filter((t) => t.status === "complete").length,
+    0,
+  );
+  const progress = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
+  const barWidth = 20;
+  const filled = Math.round((progress / 100) * barWidth);
+  const bar = "█".repeat(filled) + "░".repeat(barWidth - filled);
+
+  const currentPhase = fleetState.phases[fleetState.currentPhaseIndex];
+  const phaseInfo = currentPhase
+    ? th.fg("accent", `P${fleetState.currentPhaseIndex + 1}/${fleetState.phases.length}: ${currentPhase.name}`)
+    : th.fg("muted", "No phases");
+
+  const statusIcon = currentPhase
+    ? currentPhase.status === "complete" ? th.fg("success", "✓")
+    : currentPhase.status === "failed" ? th.fg("error", "✗")
+    : currentPhase.status === "running" || currentPhase.status === "reviewing" ? th.fg("accent", "▸")
+    : th.fg("muted", " ");
+
+  // Active agents
+  const activeAgents = fleetState.activeAgents.filter((a) => a.status !== "idle");
+  const agentLines = activeAgents.map((a) => {
+    const status = a.status === "running" ? "running" : a.status === "reviewing" ? "reviewing" : "error";
+    const color = status === "running" ? "accent" : status === "reviewing" ? "warning" : "error";
+    const icon = status === "running" ? "▸" : status === "reviewing" ? "↻" : "✗";
+    const task = a.currentTask ? ` ${truncate(a.currentTask, 35)}` : "";
+    return th.fg(color, `${icon} ${a.name}${task}`);
+  });
+
+  const titleText = "╭─ CARAVEL FLEET ";
+  const titleW = visibleWidth(titleText);
+  const dashRepeat = Math.max(1, 55 - titleW);
+  const lines: string[] = [
+    th.fg("dim", "╭─ CARAVEL FLEET " + "─".repeat(dashRepeat) + "╮"),
+    ` ${phaseInfo}  ${th.fg("accent", bar)} ${progress}%  ${statusIcon}`,
+  ];
+
+  if (agentLines.length > 0) {
+    lines.push(` ${th.fg("dim", "Active:")}  ${agentLines.join(`  ${th.fg("dim", "│  ")}`)}`);
+  }
+
+  const summaryParts = [
+    `${completedTasks}/${totalTasks} tasks`,
+    `${fleetState.reviewIterations} reviews`,
+    elapsedStr,
+  ];
+  if (fleetState.paused) summaryParts.push(th.fg("warning", "PAUSED"));
+
+  lines.push(` ${th.fg("dim", summaryParts.join("  ·  "))} ${" ".repeat(Math.max(0, 48 - visibleWidth(summaryParts.join("  ·  "))))}`);
+  lines.push(th.fg("dim", `╰${"─".repeat(55)}╯`));
+
+  return lines;
+}
+
+/**
+ * Show the non-capturing overlay dashboard (rich detail view).
+ * Positioned bottom-right, doesn't block typing.
+ */
+function showDashboardOverlay(ctx: ExtensionContext): void {
+  if (dashboardOverlayVisible) return;
+  dashboardOverlayVisible = true;
+
+  ctx.ui.custom<void>((tui, theme, _kb, done) => {
+    return new DashboardOverlayComponent(tui, theme, () => {
+      dashboardOverlayVisible = false;
+      dashboardOverlayHandle = null;
+      done();
+    });
+  }, {
+    overlay: true,
+    overlayOptions: {
+      anchor: "bottom-right",
+      width: 60,
+      maxHeight: "60%",
+      margin: { bottom: 2, right: 2 },
+    },
+    onHandle: (handle) => {
+      // Store the real handle for visibility toggle
+      dashboardOverlayHandle = {
+        setHidden: (hidden: boolean) => {
+          if (hidden) {
+            dashboardOverlayVisible = false;
+            handle.hide();
+          } else {
+            dashboardOverlayVisible = true;
+            handle.setHidden(false);
+          }
+        },
+        requestRender: () => tui.requestRender(),
+      };
+      handle.setHidden(false); // Make visible
+    },
+  });
+}
+
+/**
+ * Hide the dashboard overlay.
+ */
+function hideDashboardOverlay(): void {
+  if (!dashboardOverlayVisible || !dashboardOverlayHandle) return;
+  dashboardOverlayVisible = false;
+  dashboardOverlayHandle.setHidden(true);
+  dashboardOverlayHandle = null;
+}
+
+/**
+ * Toggle dashboard: show or hide both widget bar and overlay.
+ */
+function toggleDashboard(ctx: ExtensionContext): void {
+  if (dashboardOverlayVisible) {
+    hideDashboardOverlay();
+    ctx.ui.setWidget("caravel-fleet", undefined);
+    ctx.ui.notify("Fleet dashboard closed", "info");
+  } else {
+    // Show enhanced widget bar
+    const widgetContent = buildWidgetLines(ctx);
+    ctx.ui.setWidget("caravel-fleet", widgetContent);
+    showDashboardOverlay(ctx);
+    ctx.ui.notify("Fleet dashboard opened", "info");
+  }
+}
+
+// ============================================================================
+// Dashboard overlay component (non-capturing, persistent)
+// ============================================================================
+
+interface DashboardOverlayTab {
+  label: string;
+  render: (th: any, w: number) => string[];
+}
+
+class DashboardOverlayComponent {
+  private selectedTab = 0;
   private selectedPhase = 0;
-  private selectedTask = 0;
   private selectedAgent = 0;
-  private selectedTab = 0; // 0=tasks, 1=agents, 2=review, 3=terminal
+  private terminalScroll = 0;
+  private disposeFn?: () => void;
 
   constructor(
-    private ctx: ExtensionContext,
-    private done: (result: string | undefined) => void,
+    private tui: any,
+    private theme: any,
+    private onClose: () => void,
   ) {}
 
   handleInput(data: string): void {
     if (matchesKey(data, "escape")) {
-      dashboardOpen = false;
-      this.done("closed");
+      hideDashboardOverlay();
+      this.onClose();
       return;
     }
 
+    // Tab navigation
     if (matchesKey(data, "tab") || matchesKey(data, "shift+tab")) {
+      const tabs = ["TASKS", "AGENTS", "REVIEW", "TERMINAL"];
       this.selectedTab = matchesKey(data, "tab")
-        ? (this.selectedTab + 1) % 4
-        : (this.selectedTab - 1 + 4) % 4;
-      dashboardTui?.requestRender();
+        ? (this.selectedTab + 1) % tabs.length
+        : (this.selectedTab - 1 + tabs.length) % tabs.length;
+      this.tui.requestRender();
       return;
     }
 
-    if (matchesKey(data, "enter")) {
-      if (this.selectedTab === 0) {
-        // Tasks: show task detail
-        this.done(`task_${this.selectedPhase}_${this.selectedTask}`);
-      } else if (this.selectedTab === 1) {
-        this.done(`agent_${this.selectedAgent}`);
-      } else if (this.selectedTab === 2) {
-        this.done("review");
-      } else {
-        this.done("closed");
-      }
-      return;
-    }
-
+    // Up/down navigation
     if (matchesKey(data, "up")) {
-      if (this.selectedTab === 0) {
-        if (fleetState.phases.length > 0) this.selectedPhase = Math.max(0, this.selectedPhase - 1);
-        this.selectedTask = 0;
+      if (this.selectedTab === 0 && fleetState.phases.length > 0) {
+        this.selectedPhase = Math.max(0, this.selectedPhase - 1);
       } else if (this.selectedTab === 1) {
         this.selectedAgent = Math.max(0, this.selectedAgent - 1);
+      } else if (this.selectedTab === 3) {
+        this.terminalScroll = Math.max(0, this.terminalScroll - 1);
       }
-      dashboardTui?.requestRender();
+      this.tui.requestRender();
       return;
     }
 
     if (matchesKey(data, "down")) {
       if (this.selectedTab === 0 && fleetState.phases.length > 0) {
         this.selectedPhase = Math.min(fleetState.phases.length - 1, this.selectedPhase + 1);
-        this.selectedTask = 0;
       } else if (this.selectedTab === 1) {
         this.selectedAgent = Math.min(
           Math.max(0, fleetState.activeAgents.length - 1),
           this.selectedAgent + 1,
         );
+      } else if (this.selectedTab === 3) {
+        const outputLines = fleetState.recentOutput.split("\n");
+        const maxScroll = Math.max(0, outputLines.length - 12);
+        this.terminalScroll = Math.min(maxScroll, this.terminalScroll + 1);
       }
-      dashboardTui?.requestRender();
+      this.tui.requestRender();
       return;
     }
 
+    // Space: pause/resume
     if (matchesKey(data, "space")) {
       fleetState.paused = !fleetState.paused;
       saveState();
-      this.ctx.ui.notify(`Fleet ${fleetState.paused ? "paused" : "resumed"}`, "info");
-      dashboardTui?.requestRender();
+      this.tui.requestRender();
       return;
     }
 
+    // P: skip current phase
     if (matchesKey(data, "p")) {
-      // Skip current phase
       if (this.selectedPhase >= 0 && this.selectedPhase < fleetState.phases.length) {
         fleetState.phases[this.selectedPhase].status = "complete";
         fleetState.phases[this.selectedPhase].completedAt = Date.now();
@@ -554,34 +679,25 @@ class FleetDashboardComponent implements Focusable {
           fleetState.phases.length - 1,
         );
         saveState();
-        refreshWidget(this.ctx);
-        dashboardTui?.requestRender();
+        this.tui.requestRender();
       }
-      return;
-    }
-
-    if (matchesKey(data, "r")) {
-      // Trigger review
-      this.done("review");
       return;
     }
   }
 
   render(width: number): string[] {
-    const th = this.ctx.ui.theme;
-    const lines: string[] = [];
-    const w = Math.min(width - 2, this.width);
+    const th = this.theme;
+    const w = Math.min(width - 2, 58);
     const pad = (s: string, len: number) => s + " ".repeat(Math.max(0, len - visibleWidth(s)));
-
     const border = (text: string) => th.fg("border", text);
     const hline = " ".repeat(w);
+    const lines: string[] = [];
 
+    // Header
+    const title = th.fg("accent", "  CARAVEL FLEET DASHBOARD");
     lines.push(border(`╭${hline}╮`));
-
-    // Title
-    const title = `  CARAVEL FLEET  (Tab:panel | Up/Down:navigate | Enter:select | Space:pause | P:skip | R:review | Esc:close)`;
-    lines.push(border(` ${pad(title.slice(0, w - 2), w - 2)} `));
-    lines.push(border(` ${"─".repeat(Math.min(w - 2, 60))} `));
+    lines.push(border(` ${pad(title, w - 2)} `));
+    lines.push(border(` ${"─".repeat(Math.min(w - 2, 55))} `));
 
     // Tabs
     const tabs = ["TASKS", "AGENTS", "REVIEW", "TERMINAL"];
@@ -590,14 +706,14 @@ class FleetDashboardComponent implements Focusable {
       return i > 0 ? border(" |") + label : label;
     }).join("");
     lines.push(border(` ${pad(tabLine, w - 2)} `));
-    lines.push(border(` ${"─".repeat(Math.min(w - 2, 60))} `));
+    lines.push(border(` ${"─".repeat(Math.min(w - 2, 55))} `));
 
     // Panel content
     const panelContent = this.renderPanel(th, w);
     lines.push(...panelContent);
 
     // Footer
-    const footer = ` ${formatDuration(Date.now() - fleetState.startTime)} | ${fleetState.reviewIterations} reviews | ${fleetState.paused ? "[PAUSED]" : "[RUNNING]"} `;
+    const footer = th.fg("dim", ` ${formatDuration(Date.now() - fleetState.startTime)} | ${fleetState.reviewIterations} reviews | ${fleetState.paused ? "PAUSED" : "RUNNING"} | ↑↓:nav | Tab:panel | Space:pause | P:skip | Esc:close `);
     lines.push(border(` ${pad(footer, w - 2)} `));
     lines.push(border(`╰${hline}╯`));
 
@@ -620,8 +736,8 @@ class FleetDashboardComponent implements Focusable {
   private renderTasksPanel(th: any, w: number): string[] {
     const pad = (s: string, len: number) => s + " ".repeat(Math.max(0, len - visibleWidth(s)));
     const border = (text: string) => th.fg("border", text);
-
     const lines: string[] = [];
+
     if (fleetState.phases.length === 0) {
       lines.push(border(` ${pad("No phases defined. Use plan_project to start.", w - 2)} `));
       return lines;
@@ -634,46 +750,35 @@ class FleetDashboardComponent implements Focusable {
 
       const statusIcon = this.phaseStatusIcon(phase.status);
       const name = isCurrent ? th.fg("accent", phase.name) : phase.name;
-      const marker = isSelected ? ">>>" : isCurrent ? " " : "   ";
+      const marker = isSelected ? "  ▸ " : isCurrent ? "    " : "      ";
 
-      // Count tasks by status
       const completed = phase.tasks.filter((t) => t.status === "complete").length;
       const total = phase.tasks.length;
-      const pct = total > 0 ? `${completed}/${total}` : "--";
 
-      lines.push(
-        border(` ${pad(`${marker} ${statusIcon} P${i + 1}: ${name}`, w - 2)} `),
-      );
+      lines.push(border(` ${pad(`${marker}${statusIcon} P${i + 1}: ${name}`, w - 2)} `));
 
       if (isCurrent || isSelected) {
         for (let j = 0; j < phase.tasks.length; j++) {
           const task = phase.tasks[j]!;
-          const taskSelected = j === this.selectedTask;
-          const taskMarker = taskSelected ? "  >" : "    ";
+          const taskSelected = j === this.selectedPhase && isCurrent;
+          const taskMarker = taskSelected ? "    ▸ " : "      ";
           const taskStatus = this.taskStatusIcon(task.status);
-          const taskAgent = th.fg("dim", task.agentName);
+          const taskAgent = th.fg("muted", task.agentName);
 
-          // Review status indicators
-          const codeOk = task.codeReviewStatus === "approved";
-          const codeFail = task.codeReviewStatus === "needs_fix";
-          const codeP = task.codeReviewStatus === "pending";
-          const codeIcon = codeOk ? th.fg("success", "+") : codeFail ? th.fg("error", "!") : codeP ? th.fg("dim", "-") : "-";
+          // Review indicators
+          const codeIcon = task.codeReviewStatus === "approved" ? th.fg("success", "+")
+            : task.codeReviewStatus === "needs_fix" ? th.fg("error", "!")
+            : task.codeReviewStatus === "pending" ? th.fg("dim", "-")
+            : th.fg("dim", "-");
+          const desIcon = task.designReviewStatus === "approved" ? th.fg("success", "+")
+            : task.designReviewStatus === "needs_fix" ? th.fg("error", "!")
+            : task.designReviewStatus === "pending" ? th.fg("dim", "-")
+            : th.fg("dim", "-");
 
-          const desOk = task.designReviewStatus === "approved";
-          const desFail = task.designReviewStatus === "needs_fix";
-          const desP = task.designReviewStatus === "pending";
-          const desIcon = desOk ? th.fg("success", "+") : desFail ? th.fg("error", "!") : desP ? th.fg("dim", "-") : "-";
-
-          const reviewIndicators = `(${codeIcon}${desIcon})`;
-          const taskName = truncate(task.description, 38);
-          lines.push(
-            border(` ${pad(`${taskMarker}${taskStatus} [${taskAgent}] ${taskName} ${reviewIndicators}`, w - 2)} `),
-          );
+          const taskName = truncate(task.description, 34);
+          lines.push(border(` ${pad(`${taskMarker}${taskStatus} [${taskAgent}] ${taskName} (${codeIcon}${desIcon})`, w - 2)} `));
         }
       }
-
-      const summary = `     ${th.fg("dim", `(${pct} tasks)`)}${isSelected ? "" : ""}`;
-      lines.push(border(` ${pad(summary, w - 2)} `));
     }
 
     return lines;
@@ -682,13 +787,12 @@ class FleetDashboardComponent implements Focusable {
   private renderAgentsPanel(th: any, w: number): string[] {
     const pad = (s: string, len: number) => s + " ".repeat(Math.max(0, len - visibleWidth(s)));
     const border = (text: string) => th.fg("border", text);
-
     const lines: string[] = [];
     const agents = discoverAgents("both");
     const active = fleetState.activeAgents;
 
     if (agents.length === 0) {
-      lines.push(border(` ${pad("No agents configured. Add agent files to ~/.pi/agents/ or .pi/agents/.", w - 2)} `));
+      lines.push(border(` ${pad("No agents configured.", w - 2)} `));
       return lines;
     }
 
@@ -696,32 +800,26 @@ class FleetDashboardComponent implements Focusable {
       const agent = agents[i]!;
       const isActive = active.find((a) => a.name === agent.name);
       const isFocused = i === this.selectedAgent;
-
       const status = isActive ? isActive.status : "idle";
-      const statusStr = status === "running" ? "RUNNING" : status === "reviewing" ? "REVIEWING" : status === "error" ? "ERROR" : "IDLE";
-      const statusColor =
-        status === "running" ? "accent" : status === "reviewing" ? "warning" : status === "error" ? "error" : "muted";
-      const marker = isFocused ? " >" : "  ";
 
+      const statusStr = status === "running" ? "RUNNING" : status === "reviewing" ? "REV" : status === "error" ? "ERR" : "idle";
+      const statusColor = status === "running" ? "accent" : status === "reviewing" ? "warning" : status === "error" ? "error" : "muted";
+      const marker = isFocused ? " ▸" : "  ";
       const name = isFocused ? th.fg("accent", agent.name) : agent.name;
-      const modelStr = truncate(agent.model.split("/").pop() || agent.model, 25);
-      const taskStr = isActive?.currentTask ? truncate(` | ${isActive.currentTask}`, 30) : "";
+      const modelStr = truncate(agent.model.split("/").pop() || agent.model, 22);
+      const taskStr = isActive?.currentTask ? ` | ${truncate(isActive.currentTask, 25)}` : "";
 
-      lines.push(
-        border(` ${pad(`${marker}${name} [${th.fg(statusColor, statusStr)}]`, w - 2)} `),
-        border(` ${pad(`    Model: ${th.fg("dim", modelStr)}${taskStr}`, w - 2)} `),
-      );
+      lines.push(border(` ${pad(`${marker}${name} [${th.fg(statusColor, statusStr)}]`, w - 2)} `));
+      lines.push(border(` ${pad(`    ${modelStr}${taskStr}`, w - 2)} `));
     }
 
     if (active.length > 0) {
-      lines.push(border(` ${"─".repeat(Math.min(w - 2, 60))} `));
-      lines.push(border(` ${th.fg("accent", "Active Agents")} `));
+      lines.push(border(` ${"─".repeat(Math.min(w - 2, 55))} `));
+      lines.push(border(` ${th.fg("accent", "  Active Agents")} `));
       for (const agent of active) {
         if (agent.status !== "idle") {
-          const taskStr = truncate(agent.currentTask || "N/A", 40);
-          lines.push(
-            border(` ${pad(`  ${agent.name}: ${taskStr}`, w - 2)} `),
-          );
+          const taskStr = truncate(agent.currentTask || "N/A", 36);
+          lines.push(border(` ${pad(`    ${agent.name}: ${taskStr}`, w - 2)} `));
         }
       }
     }
@@ -732,72 +830,55 @@ class FleetDashboardComponent implements Focusable {
   private renderReviewPanel(th: any, w: number): string[] {
     const pad = (s: string, len: number) => s + " ".repeat(Math.max(0, len - visibleWidth(s)));
     const border = (text: string) => th.fg("border", text);
-
     const lines: string[] = [];
-    lines.push(border(` ${pad("Review Flow", w - 2)} `));
+
     lines.push(border(` ${pad("Two-Stage Review Gate", w - 2)} `));
-    lines.push(border(` ${pad("Iterations: " + fleetState.reviewIterations, w - 2)} `));
-    lines.push(border(` ${pad("Max: " + fleetState.maxReviewIterations, w - 2)} `));
+    lines.push(border(` ${pad("Iterations: " + fleetState.reviewIterations + " / " + fleetState.maxReviewIterations, w - 2)} `));
 
-    lines.push(border(` ${"─".repeat(Math.min(w - 2, 60))} `));
-    lines.push(border(` ${pad("Stage 1: Code Review", w - 2)} `));
-    lines.push(border(` ${pad("  Tech Lead -> checks: correctness, security, architecture", w - 2)} `));
-    lines.push(border(` ${pad("  Performance, code quality, testing", w - 2)} `));
+    lines.push(border(` ${"─".repeat(Math.min(w - 2, 55))} `));
+    lines.push(border(` ${pad("Stage 1: Code Review (Tech Lead)", w - 2)} `));
+    lines.push(border(` ${pad("  Correctness, security, performance, architecture", w - 2)} `));
+    lines.push(border(` ${pad("  Code quality, testing", w - 2)} `));
 
-    lines.push(border(` ${pad("Stage 2: Design Review", w - 2)} `));
-    lines.push(border(` ${pad("  Designer -> checks: layout, consistency, accessibility", w - 2)} `));
+    lines.push(border(` ${pad("Stage 2: Design Review (Designer)", w - 2)} `));
+    lines.push(border(` ${pad("  Layout, consistency, accessibility", w - 2)} `));
     lines.push(border(` ${pad("  UX, polish, visual quality", w - 2)} `));
 
-    lines.push(border(` ${"─".repeat(Math.min(w - 2, 60))} `));
-    lines.push(border(` ${pad("Flow:", w - 2)} `));
-    lines.push(border(` ${pad("  Developer -> [Code Review] -> [Design Review] -> Developer", w - 2)} `));
-    lines.push(border(` ${pad("  (either stage can return for fixes, up to N iterations)", w - 2)} `));
-
-    // Task-level review status summary
-    let totalTasksWithReview = 0;
-    let codeApproved = 0;
-    let codeNeedsFix = 0;
-    let designApproved = 0;
-    let designNeedsFix = 0;
-
+    // Review summary
+    let codeApproved = 0, codeNeedsFix = 0, designApproved = 0, designNeedsFix = 0;
     for (const phase of fleetState.phases) {
       for (const task of phase.tasks) {
-        if (task.codeReviewStatus) {
-          totalTasksWithReview++;
-          if (task.codeReviewStatus === "approved") codeApproved++;
-          if (task.codeReviewStatus === "needs_fix") codeNeedsFix++;
-        }
-        if (task.designReviewStatus) {
-          if (task.designReviewStatus === "approved") designApproved++;
-          if (task.designReviewStatus === "needs_fix") designNeedsFix++;
-        }
+        if (task.codeReviewStatus === "approved") codeApproved++;
+        if (task.codeReviewStatus === "needs_fix") codeNeedsFix++;
+        if (task.designReviewStatus === "approved") designApproved++;
+        if (task.designReviewStatus === "needs_fix") designNeedsFix++;
       }
     }
 
-    if (totalTasksWithReview > 0) {
-      lines.push(border(` ${"─".repeat(Math.min(w - 2, 60))} `));
-      lines.push(border(` ${pad("Review Summary:", w - 2)} `));
-      lines.push(border(` ${pad(`  Code: ${codeApproved} approved | ${codeNeedsFix} needs fix`, w - 2)} `));
-      lines.push(border(` ${pad(`  Design: ${designApproved} approved | ${designNeedsFix} needs fix`, w - 2)} `));
+    if (codeApproved + codeNeedsFix + designApproved + designNeedsFix > 0) {
+      lines.push(border(` ${"─".repeat(Math.min(w - 2, 55))} `));
+      lines.push(border(` ${pad("Summary:", w - 2)} `));
+      lines.push(border(` ${pad(`  Code: ${th.fg("success", codeApproved)} approved | ${th.fg("error", codeNeedsFix)} needs fix`, w - 2)} `));
+      lines.push(border(` ${pad(`  Design: ${th.fg("success", designApproved)} approved | ${th.fg("error", designNeedsFix)} needs fix`, w - 2)} `));
     }
 
+    // Progress bar
     if (fleetState.reviewIterations < fleetState.maxReviewIterations) {
       const pct = Math.round((fleetState.reviewIterations / fleetState.maxReviewIterations) * 100);
       const barW = 20;
       const filled = Math.round((pct / 100) * barW);
-      const bar = "[" + "=".repeat(filled) + "-".repeat(barW - filled) + "]";
-      lines.push(border(` ${pad(`${bar} ${pct}%`, w - 2)} `));
+      const bar = "█".repeat(filled) + "░".repeat(barW - filled);
+      lines.push(border(` ${pad(`[${bar}] ${pct}%`, w - 2)} `));
     }
 
-    lines.push(border(` ${"─".repeat(Math.min(w - 2, 60))} `));
-    lines.push(border(` ${pad("Recent review feedback:", w - 2)} `));
+    lines.push(border(` ${"─".repeat(Math.min(w - 2, 55))} `));
+    lines.push(border(` ${pad("Recent feedback:", w - 2)} `));
 
-    // Find recent review feedback from phases
     let foundFeedback = false;
     for (let i = fleetState.phases.length - 1; i >= 0; i--) {
       for (const task of fleetState.phases[i]!.tasks) {
         if (task.reviewFeedback) {
-          const feedback = truncate(task.reviewFeedback, 50);
+          const feedback = truncate(task.reviewFeedback, 46);
           lines.push(border(` ${pad(`  [${fleetState.phases[i]!.name}] ${feedback}`, w - 2)} `));
           foundFeedback = true;
           if (foundFeedback) break;
@@ -805,10 +886,7 @@ class FleetDashboardComponent implements Focusable {
       }
       if (foundFeedback) break;
     }
-
-    if (!foundFeedback) {
-      lines.push(border(` ${pad("  (none yet)", w - 2)} `));
-    }
+    if (!foundFeedback) lines.push(border(` ${pad("  (none yet)", w - 2)} `));
 
     return lines;
   }
@@ -816,29 +894,28 @@ class FleetDashboardComponent implements Focusable {
   private renderTerminalPanel(th: any, w: number): string[] {
     const pad = (s: string, len: number) => s + " ".repeat(Math.max(0, len - visibleWidth(s)));
     const border = (text: string) => th.fg("border", text);
-
     const lines: string[] = [];
-    lines.push(border(` ${pad("Live Terminal (recent output)", w - 2)} `));
-    lines.push(border(` ${"─".repeat(Math.min(w - 2, 60))} `));
+
+    lines.push(border(` ${pad("Recent agent output", w - 2)} `));
+    lines.push(border(` ${"─".repeat(Math.min(w - 2, 55))} `));
 
     const output = fleetState.recentOutput;
     if (!output) {
-      lines.push(border(` ${pad("(No output yet. Start a phase to see output.)", w - 2)} `));
+      lines.push(border(` ${pad("(No output yet.)", w - 2)} `));
       return lines;
     }
 
-    // Show last N lines of output
-    const maxLines = 12;
     const outputLines = output.split("\n");
-    const show = outputLines.slice(-maxLines);
+    const maxLines = 12;
+    const start = Math.min(this.terminalScroll, outputLines.length - maxLines);
+    const show = outputLines.slice(start, start + maxLines);
 
     for (const line of show) {
-      const truncated = truncate(line, w - 2);
-      lines.push(border(` ${pad(truncated, w - 2)} `));
+      lines.push(border(` ${pad(truncate(line, w - 2), w - 2)} `));
     }
 
     if (outputLines.length > maxLines) {
-      lines.push(border(` ${pad(`... (${outputLines.length - maxLines} more lines)`, w - 2)} `));
+      lines.push(border(` ${pad(`... (${outputLines.length - maxLines} more)`, w - 2)} `));
     }
 
     return lines;
@@ -847,9 +924,9 @@ class FleetDashboardComponent implements Focusable {
   private phaseStatusIcon(status: string): string {
     switch (status) {
       case "pending": return "[ ]";
-      case "running": return "=>>";
+      case "running": return "▸";
       case "reviewing": return "[?]";
-      case "complete": return "[x]";
+      case "complete": return "✓";
       case "failed": return "[!]";
       default: return "[ ]";
     }
@@ -869,37 +946,9 @@ class FleetDashboardComponent implements Focusable {
 
   invalidate(): void {}
   dispose(): void {
-    dashboardDone = undefined;
-    dashboardTui = undefined;
+    dashboardOverlayVisible = false;
+    dashboardOverlayHandle = null;
   }
-}
-
-// ============================================================================
-// Dashboard command
-// ============================================================================
-
-function openDashboard(ctx: ExtensionContext): void {
-  if (dashboardOpen) {
-    dashboardOpen = false;
-    dashboardDone?.("closed");
-    return;
-  }
-
-  dashboardOpen = true;
-  dashboardPanel = 0;
-
-  const done = (result: string) => {
-    dashboardOpen = false;
-    dashboardDone?.(result);
-  };
-
-  ctx.ui.custom<string>((tui, theme, keybindings, finish) => {
-    dashboardTui = tui;
-    dashboardDone = finish;
-    return new FleetDashboardComponent(ctx, (result) => {
-      finish(result as string);
-    });
-  }, { overlay: true });
 }
 
 // ============================================================================
@@ -919,34 +968,31 @@ export default function (pi: ExtensionAPI) {
     ctx.ui.notify("Caravel fleet initialized", "info");
   });
 
-  pi.on("agent_end", async (_event, ctx) => {
+  pi.on("agent_end", async (event, ctx) => {
     refreshWidget(ctx);
     saveState();
+    // Refresh overlay if visible
+    if (dashboardOverlayVisible && dashboardOverlayHandle) {
+      dashboardOverlayHandle.requestRender();
+    }
   });
 
   pi.on("session_shutdown", () => {
     saveState();
     stopWidgetRefresh();
+    hideDashboardOverlay();
   });
 
-  // ---- Dashboard ----
+  // ---- Dashboard (non-blocking) ----
 
   pi.registerCommand("fleet", {
-    description: "Open fleet dashboard overlay",
-    handler: async (_args, ctx) => openDashboard(ctx),
+    description: "Toggle fleet dashboard (non-blocking widget bar + overlay)",
+    handler: async (_args, ctx) => toggleDashboard(ctx),
   });
 
   pi.registerCommand("fleet-toggle", {
-    description: "Toggle fleet dashboard (open/close)",
-    handler: async (_args, ctx) => {
-      if (dashboardOpen) {
-        dashboardOpen = false;
-        dashboardDone?.("closed");
-        ctx.ui.notify("Fleet dashboard closed", "info");
-      } else {
-        openDashboard(ctx);
-      }
-    },
+    description: "Toggle fleet dashboard (alias for /fleet)",
+    handler: async (_args, ctx) => toggleDashboard(ctx),
   });
 
   // ---- Tools ----

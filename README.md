@@ -205,16 +205,23 @@ review_task(phaseIndex=0)
 
 ### Fleet Dashboard
 
+The dashboard is **non-blocking** — you can type while watching the fleet evolve.
+
 ```
-/fleet          # Open dashboard overlay
-/fleet-toggle   # Toggle open/close
+/fleet          # Toggle fleet dashboard (widget bar + overlay)
+/fleet-toggle   # Toggle open/close (alias for /fleet)
 ```
 
-Dashboard panels:
-- **TASKS**: phases, tasks, and progress (with review status indicators)
-- **AGENTS**: agent roster, models, and current assignments
-- **REVIEW**: two-stage review flow, code/design summaries, iteration tracking
-- **TERMINAL**: recent agent output (live terminal)
+The dashboard has two layers:
+- **Widget bar**: Always-visible compact progress bar above the editor (always on when active)
+- **Overlay**: Rich detail panel (bottom-right) with tabs for TASKS, AGENTS, REVIEW, TERMINAL
+
+Keyboard shortcuts in the overlay:
+- **Tab / Shift+Tab**: switch panels
+- **Up/Down**: navigate items
+- **Space**: pause/resume fleet
+- **P**: skip current phase
+- **Esc**: close overlay
 
 ### Fleet Control
 
