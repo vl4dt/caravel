@@ -32,10 +32,10 @@ Main Agent --> supervisor routing     |
 
 ```bash
 # Project-local (recommended)
-pi install -l git:github.com/your-username/caravel
+pi install -l git:github.com/vl4dt/caravel
 
 # Or clone and symlink
-git clone https://github.com/your-username/caravel.git
+git clone https://github.com/vl4dt/caravel.git
 ln -s ./caravel/agents .pi/agents
 ln -s ./caravel/extensions/caravel.ts .pi/extensions/caravel.ts
 ```
