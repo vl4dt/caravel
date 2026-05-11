@@ -1,0 +1,13 @@
+{
+  "name": "caravel",
+  "version": "0.1.0",
+  "description": "Fleet orchestration for Pi - multi-agent team with local-only models",
+  "keywords": ["pi-package"],
+  "pi": {
+    "extensions": ["./extensions"],
+    "agents": ["./agents"],
+    "skills": ["./skills"],
+    "prompts": ["./prompts"]
+  },
+  "dependencies": {}
+}
