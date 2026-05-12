@@ -157,7 +157,7 @@ function findNearestProjectAgentsDir(): string | null {
   while (true) {
     const candidate = path.join(currentDir, ".pi", "agents");
     if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) return candidate;
-    const parent = path.dirname(currentDir);
+    const parent = dirname(currentDir);
     if (parent === currentDir) return null;
     currentDir = parent;
   }
@@ -184,6 +184,8 @@ function parseAgentDef(content: string, source: "project" | "user"): AgentDefini
 // ============================================================================
 // Helpers
 // ============================================================================
+
+function dirname(p: string): string { return path.dirname(p); }
 
 function truncate(s: string, maxLen: number): string {
   return s.length > maxLen ? s.slice(0, maxLen - 1) + " " : s;
@@ -264,13 +266,9 @@ function loadState(ctx: ExtensionContext): void {
 }
 
 // ============================================================================
-// Widget bar — always exactly 6 lines, never changes size
+// Widget bar — always exactly 4 lines, left-edge only
 // ============================================================================
 
-/**
- * Build the fixed 6-line widget bar content.
- * This is designed to never change height or width, providing a stable visual anchor.
- */
 function buildWidgetLines(ctx: ExtensionContext): string[] {
   const th = ctx.ui.theme;
   const now = Date.now();
@@ -283,122 +281,74 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
   const progress = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
   const elapsed = formatDuration(now - fleetState.startTime);
 
-  const border = th.fg("borderMuted");
-  const borderAccent = th.fg("accent");
-  const muted = th.fg("muted");
-  const dim = th.fg("dim");
-
-  // Always exactly 6 lines:
-  // Line 1: top border
-  // Line 2: title/status header
-  // Line 3: phase info + progress bar
-  // Line 4: stats summary
-  // Line 5: last agent action (or idle info)
-  // Line 6: bottom border
-
-  // ── Top border ──
-  const topBorder = th.fg("borderMuted", "╔══════════════════════════════════════════════════════════════╗");
+  const muted = (t: string) => th.fg("muted", t);
+  const dim = (t: string) => th.fg("dim", t);
+  const edge = (t: string) => th.fg("borderMuted", "│") + "  " + t;
 
   if (fleetState.phases.length === 0) {
-    // ── IDLE STATE ──
+    // ── IDLE ──
     const agentCount = discoverAgents("both").length;
     const statusIcon = fleetState.paused ? th.fg("warning", "⏸") : th.fg("muted", "●");
     const statusText = fleetState.paused ? "PAUSED" : "IDLE";
-    const statusColor = fleetState.paused ? "warning" : "muted";
-
+    const sc = fleetState.paused ? "warning" : "muted";
     const title = th.fg("accent", "CARAVEL FLEET");
-    const header = `  ${title}  ${muted("│")}  ${th.fg(statusColor, statusIcon + " " + statusText)}`;
-    const headerLine = th.fg("borderMuted", "║") + header.padEnd(62) + th.fg("borderMuted", " ║");
-
-    // Progress bar (always shown, 0% when idle)
-    const barW = 20;
-    const bar = "░".repeat(barW);
-    const progressLine = th.fg("borderMuted", "║") + `  [${bar}] 0%  ${muted("│")}  ${agentCount} agents configured  │  ${elapsed}`.padEnd(62) + th.fg("borderMuted", " ║");
-
-    // Agent activity
-    const mainAgent = fleetState.mainAgentActivity;
-    let actionLine = muted("  last: idle — no active work yet");
-    if (mainAgent && mainAgent.action !== "idle") {
-      const icon = mainAgent.status === "thinking" ? th.fg("dim", "◇") : th.fg("dim", "▸");
-      const timeAgo = now - mainAgent.timestamp;
-      const timeStr = timeAgo < 60000 ? `${Math.round(timeAgo / 1000)}s ago`
-        : timeAgo < 3600000 ? `${Math.round(timeAgo / 60000)}m ago`
-        : `${Math.round(timeAgo / 3600000)}h ago`;
-      const detail = truncate(mainAgent.detail, 20);
-      actionLine = muted(`  ${icon} last: ${mainAgent.action} → ${detail}  (${timeStr})`);
-    }
-    const actionBarLine = th.fg("borderMuted", "║") + actionLine.padEnd(62) + th.fg("borderMuted", " ║");
-
-    // Review count line
-    const reviewLine = th.fg("borderMuted", "║") + `  ${th.fg("dim", `● ${fleetState.reviewIterations} reviews completed`)}  ${muted("│")}  ${muted(`Elapsed: ${elapsed}`)}`.padEnd(62) + th.fg("borderMuted", " ║");
-
-    const bottomBorder = th.fg("borderMuted", "╚══════════════════════════════════════════════════════════════╝");
-
-    return [topBorder, headerLine, progressLine, actionBarLine, reviewLine, bottomBorder];
+    return [
+      edge(`${title}  ${muted("│")}  ${th.fg(sc, statusIcon + " " + statusText)}`),
+      edge(`[░░░░░░░░░░░░░░░░░░░░] 0%  ${muted("│")}  ${agentCount} agents configured  │  ${elapsed}`),
+      edge(muted("  last: idle — no active work yet")),
+      edge(`${th.fg("dim", `● ${fleetState.reviewIterations} reviews completed`)}  ${muted("│")}  ${muted(`Elapsed: ${elapsed}`)}`),
+    ];
   }
 
-  // ── ACTIVE STATE ──
-  const currentPhase = fleetState.phases[fleetState.currentPhaseIndex];
-
-  // Header: phase name + status
-  const phaseLabel = currentPhase
-    ? th.fg("accent", `P${fleetState.currentPhaseIndex + 1}/${fleetState.phases.length}: ${currentPhase.name}`)
+  // ── ACTIVE ──
+  const phase = fleetState.phases[fleetState.currentPhaseIndex];
+  const phaseLabel = phase
+    ? th.fg("accent", `P${fleetState.currentPhaseIndex + 1}/${fleetState.phases.length}: ${phase.name}`)
     : th.fg("muted", "No current phase");
 
-  const statusIcon = currentPhase
-    ? currentPhase.status === "complete" ? th.fg("success", "✓")
-    : currentPhase.status === "failed" ? th.fg("error", "✗")
-    : (currentPhase.status === "running" || currentPhase.status === "reviewing") ? th.fg("accent", "▸")
+  const sIcon = phase
+    ? phase.status === "complete" ? th.fg("success", "✓")
+    : phase.status === "failed" ? th.fg("error", "✗")
+    : (phase.status === "running" || phase.status === "reviewing") ? th.fg("accent", "▸")
     : th.fg("muted", "○")
     : th.fg("muted", "○");
-  const statusText = currentPhase
-    ? (currentPhase.status === "complete" ? "DONE" : currentPhase.status === "failed" ? "FAILED" : currentPhase.status === "reviewing" ? "REV" : "RUN")
+  const sText = phase
+    ? (phase.status === "complete" ? "DONE" : phase.status === "failed" ? "FAILED" : phase.status === "reviewing" ? "REV" : "RUN")
     : "UNKNOWN";
-  const statusColor = currentPhase
-    ? currentPhase.status === "complete" ? "success" : currentPhase.status === "failed" ? "error" : "accent"
+  const sColor = phase
+    ? (phase.status === "complete" ? "success" : phase.status === "failed" ? "error" : "accent")
     : "muted";
 
-  const header = `  ${th.fg("accent", "CARAVEL FLEET")}  ${muted("│")}  ${phaseLabel}  ${muted("│")}  ${th.fg(statusColor, statusIcon + " " + statusText)}`;
-  const headerLine = th.fg("borderMuted", "║") + header.padEnd(62) + th.fg("borderMuted", " ║");
+  const filled = Math.round((progress / 100) * 20);
+  const bar = "█".repeat(filled) + "░".repeat(20 - filled);
 
-  // Progress bar
-  const barW = 20;
-  const filled = Math.round((progress / 100) * barW);
-  const bar = "█".repeat(filled) + "░".repeat(barW - filled);
-  const progressLine = th.fg("borderMuted", "║") + `  [${bar}] ${progress}%  ${muted("│")}  ${completedTasks}/${totalTasks} tasks  │  ${elapsed}`.padEnd(62) + th.fg("borderMuted", " ║");
-
-  // Agent activity
-  const mainAgent = fleetState.mainAgentActivity;
+  const ma = fleetState.mainAgentActivity;
   const activeAgentsList = fleetState.activeAgents.filter((a) => a.status !== "idle");
-  let agentLine = "";
+  let line3 = "";
 
   if (fleetState.paused) {
-    agentLine = muted("  ⏸ PAUSED");
-  } else if (mainAgent && mainAgent.action !== "idle" && (mainAgent.status === "executing" || mainAgent.status === "thinking")) {
-    const actColor = mainAgent.status === "thinking" ? "dim" : "accent";
-    const actIcon = mainAgent.status === "thinking" ? th.fg("dim", "◇") : th.fg("accent", "▸");
-    const detail = truncate(mainAgent.detail, 20);
-    agentLine = `  ${actIcon} running: ${mainAgent.action} → ${detail}`;
-  } else if (mainAgent && mainAgent.action !== "idle") {
-    const timeAgo = now - mainAgent.timestamp;
-    const timeStr = timeAgo < 60000 ? `${Math.round(timeAgo / 1000)}s ago`
-      : timeAgo < 3600000 ? `${Math.round(timeAgo / 60000)}m ago`
-      : `${Math.round(timeAgo / 3600000)}h ago`;
-    const detail = truncate(mainAgent.detail, 20);
-    agentLine = `  ▸ last: ${mainAgent.action} → ${detail}  (${timeStr})`;
+    line3 = muted("  ⏸ PAUSED");
+  } else if (ma && ma.action !== "idle" && (ma.status === "executing" || ma.status === "thinking")) {
+    const actIcon = ma.status === "thinking" ? th.fg("dim", "◇") : th.fg("accent", "▸");
+    line3 = `  ${actIcon} running: ${ma.action} → ${truncate(ma.detail, 20)}`;
+  } else if (ma && ma.action !== "idle") {
+    const age = now - ma.timestamp;
+    const ts = age < 60000 ? `${Math.round(age / 1000)}s ago`
+      : age < 3600000 ? `${Math.round(age / 60000)}m ago`
+      : `${Math.round(age / 3600000)}h ago`;
+    line3 = `  ▸ last: ${ma.action} → ${truncate(ma.detail, 20)}  (${ts})`;
   } else if (activeAgentsList.length > 0) {
-    agentLine = activeAgentsList.map((a) => `  ${th.fg("accent", "▸")} ${a.name}`).join("  │  ");
+    line3 = activeAgentsList.map((a) => `  ${th.fg("accent", "▸")} ${a.name}`).join("  │  ");
   } else {
-    agentLine = muted("  idle — waiting for work");
+    line3 = muted("  idle — waiting for work");
   }
-  const agentBarLine = th.fg("borderMuted", "║") + agentLine.padEnd(62) + th.fg("borderMuted", " ║");
 
-  // Reviews + elapsed
-  const statsLine = th.fg("borderMuted", "║") + `  ${th.fg("dim", `${fleetState.reviewIterations} reviews`)}  ${muted("│")}  ${muted(`Elapsed: ${elapsed}`)}`.padEnd(62) + th.fg("borderMuted", " ║");
-
-  const bottomBorder = th.fg("borderMuted", "╚══════════════════════════════════════════════════════════════╝");
-
-  return [topBorder, headerLine, progressLine, agentBarLine, statsLine, bottomBorder];
+  return [
+    edge(`${th.fg("accent", "CARAVEL FLEET")}  ${muted("│")}  ${phaseLabel}  ${muted("│")}  ${th.fg(sColor, sIcon + " " + sText)}`),
+    edge(`[${bar}] ${progress}%  ${muted("│")}  ${completedTasks}/${totalTasks} tasks  │  ${elapsed}`),
+    edge(line3),
+    edge(`${th.fg("dim", `${fleetState.reviewIterations} reviews`)}  ${muted("│")}  ${muted(`Elapsed: ${elapsed}`)}`),
+  ];
 }
 
 /**
@@ -407,7 +357,7 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
  */
 function refreshWidget(ctx: ExtensionContext): void {
   if (!ctx.hasUI) return;
-  ctx.ui.setWidget("caravel-fleet", widgetVisible ? buildWidgetLines(ctx) : null);
+  ctx.ui.setWidget("caravel-fleet", widgetVisible ? buildWidgetLines(ctx) : []);
 }
 
 function setWidgetVisibility(ctx: ExtensionContext, visible: boolean): void {
@@ -930,7 +880,9 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("fleet", {
     description: "Toggle fleet widget bar visibility",
     handler: async (_args, ctx) => {
-      toggleWidgetVisibility(ctx);
+      widgetVisible = !widgetVisible;
+      refreshWidget(ctx);
+      ctx.ui.notify(`Fleet widget ${widgetVisible ? "shown" : "hidden"}`, "info");
     },
   });
 
