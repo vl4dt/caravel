@@ -2,7 +2,7 @@
   "comment": "Example: llama.cpp for coding agents + lm-studio for the designer",
   "providers": {
     "llama.cpp": {
-      "baseUrl": "http://10.74.74.151:9090/v1",
+      "baseUrl": "http://localhost:9090/v1",
       "api": "openai-completions",
       "apiKey": "llama.cpp",
       "models": [
@@ -21,7 +21,7 @@
       ]
     },
     "lm-studio": {
-      "baseUrl": "http://10.74.74.175:1234/v1",
+      "baseUrl": "http://localhost:1234/v1",
       "api": "openai-completions",
       "apiKey": "lmstudio",
       "compat": {

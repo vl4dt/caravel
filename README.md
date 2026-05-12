@@ -1,6 +1,6 @@
 # Caravel
 
-Fleet orchestration for Pi — multi-agent software development with supervisor-worker pattern and two-stage review loops.
+Fleet orchestration for Pi — multi-agent software development with supervisor-worker pattern, two-stage review loops, and a non-blocking fleet dashboard. Works with any model provider (local or cloud).
 
 ## Architecture
 
@@ -20,22 +20,15 @@ Main Agent --> supervisor routing     |
 
 ## Fleet Agents
 
-| Agent | Role |
-|-------|------|
-| **developer** | Coding, implementation, file manipulation |
-| **tech-lead** | Architecture, planning, code review |
-| **designer** | Visual review, UI analysis, design quality |
+| Agent | Role | Tools |
+|-------|------|-------|
+| **developer** | Coding, implementation, file manipulation | `read`, `write`, `edit`, `bash`, `grep`, `find`, `ls` |
+| **tech-lead** | Architecture, planning, code quality review | `read`, `bash`, `grep`, `find`, `ls`, `subagent` |
+| **designer** | Visual review, UI analysis, design quality (vision) | `read`, `bash`, `grep`, `find`, `ls` |
 
-> Each agent's model is configurable — any model in your `models.json` works, regardless of provider.
+> Each agent's model is configurable in its `agents/*.md` file — any model in your `models.json` works, regardless of provider. The designer needs a vision-capable model (supports image input).
 
 ## Installation
-
-### Install via npm (recommended)
-
-```bash
-# Any platform — just one command
-pi install -l npm:caravel
-```
 
 ### Install from GitHub
 
@@ -97,7 +90,7 @@ The agents reference three provider types by name. The names are just labels —
 ```json
 {
   "llama.cpp": {
-    "baseUrl": "http://10.0.0.1:9090/v1",
+    "baseUrl": "http://localhost:9090/v1",
     "api": "openai-completions",
     "apiKey": "llama.cpp",
     "models": [
@@ -111,7 +104,7 @@ The agents reference three provider types by name. The names are just labels —
 ```json
 {
   "lm-studio": {
-    "baseUrl": "http://10.0.0.2:1234/v1",
+    "baseUrl": "http://localhost:1234/v1",
     "api": "openai-completions",
     "apiKey": "lmstudio",
     "compat": { "supportsDeveloperRole": false },
@@ -130,7 +123,7 @@ The agents reference three provider types by name. The names are just labels —
 ```json
 {
   "ollama": {
-    "baseUrl": "http://10.0.0.1:11434/v1",
+    "baseUrl": "http://localhost:11434/v1",
     "api": "openai-completions",
     "apiKey": "ollama",
     "models": [
@@ -165,7 +158,7 @@ After configuring `models.json`, list available models:
 pi --list-models
 ```
 
-Then in your session, the caravel extension will auto-discover agents from `.pi/agents/` and use the models you've assigned.
+Then in your session, the caravel extension will auto-discover agents from your configured agent directory and use the models you've assigned.
 
 ### Need a Different Setup?
 
@@ -184,37 +177,58 @@ Just make sure the designer's model supports image input (`"input": ["text", "im
 
 ## Usage
 
-### Quick Start
+The entire workflow is **natural language** — you describe what you want, the main agent plans it, and the fleet executes. No TypeScript, no manual tool calls from your side.
+
+### Start a Project (New Codebase)
+
+Just describe what you want to build:
+
+> **You:** "I want to build a kanban board app with drag-and-drop, multiple boards, and local storage."
+
+The main agent will:
+1. **Plan** — decompose your idea into phases and tasks using `plan_project`
+2. **Execute** — run each phase with the `run_phase` tool, dispatching sub-agents
+3. **Review** — auto-trigger `review_task` after each phase for code + design review
+4. **Iterate** — fix review feedback, advance to the next phase
+
+You can **watch** the fleet work via the dashboard and **interrupt** at any time.
+
+### Take Over an Existing Codebase
+
+Describe your goal for an existing project:
+
+> **You:** "I want to add dark mode support to this existing React app."
+
+The main agent will:
+1. **Analyze** — scan the existing codebase structure, tech stack, and dependencies
+2. **Plan** — create incremental phases that build on what exists
+3. **Execute** — run phases with the fleet, reviewing at each step
+
+Or manually run `/analyze` to get a detailed codebase analysis report first.
+
+### Run /go — Auto-Orchestrate the Fleet
+
+Once a plan exists (via `plan_project` or the planner agent), launch the fleet:
+
+> **You:** "go" / "launch the fleet" / "start building"
+
+The `/go` command auto-orchestrates everything:
+- Runs all phases sequentially
+- Triggers review between each phase
+- Auto-fixes review issues
+- Reports progress
+
+### Monitor the Dashboard
+
+Open the fleet dashboard to watch progress in real-time:
 
 ```
-plan_project(
-  name="My App",
-  phases=[
-    {
-      name: "Setup",
-      tasks: [
-        {agent: "developer", task: "Initialize the project..."},
-      ]
-    },
-  ]
-)
-
-run_phase(phaseIndex=0)
-review_task(phaseIndex=0)
-```
-
-### Fleet Dashboard
-
-The dashboard is **non-blocking** — you can type while watching the fleet evolve.
-
-```
-/fleet          # Toggle fleet dashboard (widget bar + overlay)
-/fleet-toggle   # Toggle open/close (alias for /fleet)
+/fleet          # Toggle fleet dashboard
 ```
 
 The dashboard has two layers:
-- **Widget bar**: Always-visible compact progress bar above the editor (always on when active)
-- **Overlay**: Rich detail panel (bottom-right) with tabs for TASKS, AGENTS, REVIEW, TERMINAL
+- **Widget bar**: Always-visible compact progress bar above the editor (updates every 3 seconds)
+- **Overlay**: Rich detail panel (bottom-right, non-capturing) with tabs for TASKS, AGENTS, REVIEW, TERMINAL
 
 Keyboard shortcuts in the overlay:
 - **Tab / Shift+Tab**: switch panels
@@ -223,33 +237,69 @@ Keyboard shortcuts in the overlay:
 - **P**: skip current phase
 - **Esc**: close overlay
 
-### Fleet Control
+### Control the Fleet
 
+You control the fleet through **natural commands** — the main agent handles the tool calls:
+
+> **You:** "pause" / "pause the fleet"
+> **You:** "resume" / "continue"
+> **You:** "skip this phase" / "next phase"
+> **You:** "reset" / "start over"
+> **You:** "review this phase" / "run review"
+
+The main agent translates these into `fleet_control` and `review_task` calls behind the scenes.
+
+### Commands Reference
+
+| Command | Description |
+|---------|-------------|
+| `/go` | Auto-run all phases with review between each |
+| `/analyze` | Analyze existing codebase (structure, tech stack, dependencies) |
+| `/fleet` | Toggle the fleet dashboard |
+| `fleet_control(action="go")` | Auto-orchestrate fleet from code |
+| `fleet_control(action="pause\|resume\|skip\|next\|reset")` | Manual fleet control |
+| `plan_project(...)` | Define phases and tasks |
+| `run_phase(phaseIndex=0)` | Execute a specific phase |
+| `review_task(phaseIndex=0)` | Trigger code + design review |
+
+For direct access, the following tools are available:
+
+```javascript
+fleet_control(action="pause|resume|skip|next|reset|go")
+review_task(phaseIndex=0)                           // Full review (code + design)
+review_task(phaseIndex=0, reviewType="code")        // Code review only
+review_task(phaseIndex=0, reviewType="design")      // Design review only
+review_task(phaseIndex=0, feedback="...")           // Manual feedback (bypasses auto-review)
 ```
-fleet_control(action="pause|resume|skip|next|reset")
-```
+
+These are for advanced use — you can invoke them from the agent if needed, but the default workflow uses natural language.
 
 ## File Structure
 
 ```
 caravel/
-├── SKILL.md              # Main skill for the main agent
+├── SKILL.md              # Main skill for the main agent (agent-facing guide)
 ├── package.json          # Pi package manifest
-├── README.md             # This file
+├── README.md             # This file (user-facing documentation)
 ├── LICENSE
+├── PROJECT-DESIGN.md     # Dashboard design architecture doc
+├── PROJECT-PLAN.md       # Project roadmap and assessment
 ├── examples/             # Example models.json configurations
 │   ├── models-llama-cpp-lm-studio.json
 │   ├── models-ollama.json
 │   └── models-docker.json
 ├── extensions/
-│   └── caravel.ts        # Orchestrator (5 tools, dashboard, subagent spawning)
+│   └── caravel.ts        # Orchestrator (5 tools, non-blocking dashboard, subagent spawning)
 ├── agents/
 │   ├── developer.md      # Developer agent (configurable model)
 │   ├── tech-lead.md      # Tech lead agent (configurable model)
-│   └── designer.md       # Designer agent (configurable model, needs vision)
+│   ├── designer.md       # Designer agent (configurable model, needs vision)
+│   ├── planner.md        # Conversational planner (interviews user, generates plans)
+│   └── auditor.md        # Codebase analyzer (scans existing projects)
 ├── skills/
-│   ├── code-review.md    # Code review checklist
-│   └── design-review.md  # Design review checklist
+│   ├── code-review.md    # Code review checklist for tech-lead
+│   ├── design-review.md  # Design review checklist for designer
+│   └── fleet-orchestration.md  # Auto-orchestration guidance for the main agent
 └── prompts/
     └── task-brief.md     # Task brief template
 ```
@@ -268,7 +318,7 @@ The review is a **quality gate** — both stages must pass for a task to be appr
    - Layout, consistency, accessibility
    - UX, polish, visual quality
 
-Either stage can return for fixes. The developer auto-fixes and resubmits. Loop continues until approved or max iterations (default: 3 per task).
+Either stage can return for fixes. The developer auto-fixes and resubmits. Loop continues until approved or max iterations (default: 5 fleet-wide, 3 per task).
 
 ### Per-Agent Model Selection
 
@@ -277,6 +327,14 @@ Each agent's model is defined in its `.md` file. The format is `<provider>/<mode
 ### State Persistence
 
 Fleet state persists across sessions via `pi.appendEntry`. Resume a session and the fleet state (phases, progress, review iterations) is restored automatically.
+
+### Agent Discovery
+
+Agents are discovered from two sources:
+- **User agents**: `~/.pi/agent/agents/*.md` (system-wide)
+- **Project agents**: `<project>/.pi/agents/*.md` (project-local, overrides user agents by name)
+
+This means you can have default agents installed globally and override specific ones per project.
 
 ## Customization
 

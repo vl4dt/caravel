@@ -6,7 +6,7 @@ allowed-tools: plan_project,run_phase,review_task,fleet_control,fleet_status
 
 # Caravel Fleet Orchestration
 
-You are the captain of a fleet of specialized AI agents. Use caravel to build complete applications from start to finish.
+You are the captain of a fleet of specialized AI agents. Use caravel to build complete applications from start to finish — entirely through natural language, no TypeScript needed from the user.
 
 ## Architecture
 
@@ -32,48 +32,104 @@ Main Agent --> supervisor routing     |
 | **tech-lead** | Architecture, planning, code quality review |
 | **designer** | Visual review, UI analysis, design quality |
 
-Each agent's model is configurable in its `agents/*.md` file — works with any provider (local or cloud).
+Each agent's model is configurable in its `agents/*.md` file — works with any provider (local or cloud). The designer needs a vision-capable model (supports image input).
+
+## Natural Language Workflow
+
+The user describes what they want in **plain English**. You handle all the orchestration internally — the user never types TypeScript.
+
+### Two Main Scenarios
+
+#### Scenario 1: New Project
+
+```
+User: "I want to build a kanban board app with drag-and-drop"
+```
+
+You respond:
+1. **If scope is unclear** — Delegate to the planner agent to interview the user:
+   ```javascript
+   subagent("planner", "Help plan this project: {user's description}")
+   ```
+   The planner will ask questions one at a time, then produce a `plan_project()` call.
+
+2. **If scope is clear** — Plan the project yourself using `plan_project`, then run `/go`:
+   ```javascript
+   plan_project({ name: "...", phases: [...] })
+   fleet_control(action = "go")  // auto-runs all phases with review between each
+   ```
+
+#### Scenario 2: Taking Over Existing Codebase
+
+```
+User: "I want to add dark mode to this existing React app"
+```
+
+You respond:
+1. **Analyze first** — Use the auditor agent or run `/analyze` to understand the existing codebase
+2. **Plan incrementally** — Create phases that build on what exists
+3. **Run with `/go`** — Auto-orchestrates everything with review
+
+### The /go Command
+
+The `/go` command is your workhorse — it auto-orchestrates the fleet:
+- Runs all phases sequentially
+- Triggers review between each phase
+- Auto-fixes review issues
+- Reports progress
+- Handles interruptions (pause/resume/skip)
+
+You can invoke it with:
+```javascript
+fleet_control(action = "go")
+```
+
+### Monitoring
+
+- Open the dashboard with `/fleet` so the user can watch progress
+- Report phase completions and review results
+- If a review fails, explain what needs fixing
 
 ## How It Works
 
 ### Phase 1: Plan
 
-Use `plan_project` to decompose the project into phases and tasks. Plan all phases up front so each agent has full context.
+Use `plan_project` to decompose the project into phases and tasks.
 
-```
-plan_project(
-  name="Build a Kanban Board App",
-  phases=[
+```javascript
+plan_project({
+  name: "Build a Kanban Board App",
+  phases: [
     {
       name: "Project Setup",
       tasks: [
-        {agent: "developer", task: "Initialize project with Next.js 14, TypeScript, TailwindCSS..."},
-        {agent: "tech-lead", task: "Define component architecture and state management strategy..."},
+        { agent: "developer", task: "Initialize project with Next.js 14, TypeScript, TailwindCSS..." },
+        { agent: "tech-lead", task: "Define component architecture and state management strategy..." },
       ]
     },
     {
       name: "Core Components",
       tasks: [
-        {agent: "developer", task: "Create Board, Column, and Card components..."},
-        {agent: "developer", task: "Implement drag-and-drop functionality..."},
+        { agent: "developer", task: "Create Board, Column, and Card components..." },
+        { agent: "developer", task: "Implement drag-and-drop functionality..." },
       ]
     },
     {
       name: "Visual Review",
       tasks: [
-        {agent: "designer", task: "Review Board and Column components for visual quality..."},
+        { agent: "designer", task: "Review Board and Column components for visual quality..." },
       ]
     },
   ]
-)
+})
 ```
 
 ### Phase 2: Execute
 
 Use `run_phase(phaseIndex=N)` to execute each phase sequentially. Sub-agents run with their own model, tools, and context.
 
-```
-run_phase(phaseIndex=0)
+```javascript
+run_phase(phaseIndex = 0)
 ```
 
 Results include completion status and token usage.
@@ -100,41 +156,30 @@ Use `review_task(phaseIndex=N)` to submit completed tasks for a **two-stage revi
 If EITHER stage fails:
 - Developer automatically fixes the issues
 - Both stages re-run (or only the failed stage, if using `reviewType`)
-- Loop up to `maxReviewCount` (default: 3) times per task
+- Loop up to `maxReviewCount` (default: 3 per task, 5 fleet-wide) times
 - If max reached: task marked as FAILED, escalates to main agent
 
 If BOTH stages pass: task APPROVED, move to next phase.
 
-```
-review_task(phaseIndex=0)              // Full code + design review
-review_task(phaseIndex=0, reviewType="code")  // Code review only
-review_task(phaseIndex=0, reviewType="design") // Design review only
+```javascript
+review_task(phaseIndex = 0)              // Full code + design review
+review_task(phaseIndex = 0, reviewType = "code")     // Code review only
+review_task(phaseIndex = 0, reviewType = "design")   // Design review only
+review_task(phaseIndex = 0, feedback = "...")        // Manual feedback (bypasses auto-review)
 ```
 
 ### Phase 4: Iterate
 
 Repeat phases until complete. Use `fleet_control` to pause, resume, skip, or jump between phases.
 
+```javascript
+fleet_control(action = "next")       // Move to next phase
+fleet_control(action = "skip")       // Skip current phase
+fleet_control(action = "pause")      // Pause execution
+fleet_control(action = "resume")     // Resume execution
+fleet_control(action = "reset")      // Reset fleet state
+fleet_control(action = "go")         // Auto-run all remaining phases with review
 ```
-fleet_control(action="next")       // Move to next phase
-fleet_control(action="skip")       // Skip current phase
-fleet_control(action="pause")      // Pause execution
-fleet_control(action="resume")     // Resume execution
-fleet_control(action="reset")      // Reset fleet state
-```
-
-## When to Use Caravel
-
-- Building a complete application from scratch
-- Tasks that benefit from specialized roles (code + design review)
-- Projects where iterative quality gates matter
-- Any task where you want automated review loops
-
-## When NOT to Use Caravel
-
-- Simple one-off fixes (just do it directly)
-- Research or web search tasks
-- Tasks that don't involve code output
 
 ## Agent Selection Guide
 
@@ -152,16 +197,16 @@ Be specific and actionable:
 
 ### Good
 
-```
-{agent: "developer", task: "Create src/components/Button.tsx with primary/secondary variants, 
+```javascript
+{ agent: "developer", task: "Create src/components/Button.tsx with primary/secondary variants, 
   supporting all Button props from ButtonProps interface. Follow the existing pattern in 
-  src/components/Card.tsx for prop structure and styling."}
+  src/components/Card.tsx for prop structure and styling." }
 ```
 
 ### Bad
 
-```
-{agent: "developer", task: "Make a button component"}
+```javascript
+{ agent: "developer", task: "Make a button component" }
 ```
 
 ## Review Loop Details
@@ -208,11 +253,11 @@ Dashboard review panel shows:
 
 ## Fleet Dashboard
 
-The fleet dashboard is **non-blocking** — you can keep typing while watching the fleet.
+The fleet dashboard is **non-blocking** — you can keep typing while watching the fleet evolve.
 
 Open with `/fleet` (toggles both widget bar and detail overlay):
-- **Widget bar**: Always-visible compact progress bar above the editor
-- **Overlay**: Rich detail panel with tabs (TASKS, AGENTS, REVIEW, TERMINAL)
+- **Widget bar**: Always-visible compact progress bar above the editor (updates every 3 seconds)
+- **Overlay**: Rich detail panel (bottom-right, non-capturing) with tabs (TASKS, AGENTS, REVIEW, TERMINAL)
 
 Keyboard controls in the overlay:
 - Tab / Shift+Tab: switch panels
@@ -227,7 +272,7 @@ The widget bar (always visible) shows:
 - Task completion count, review count, elapsed time
 
 The overlay detail panel shows:
-- TASKS: phases with task status, review indicators (+/-)
-- AGENTS: all agents with model info, active agent tasks
-- REVIEW: review iteration count, code/design summary, recent feedback
-- TERMINAL: recent agent output (scrollable with Up/Down)
+- **TASKS**: phases with task status, review indicators (+/-)
+- **AGENTS**: all agents with model info, active agent tasks
+- **REVIEW**: review iteration count, code/design summary, recent feedback
+- **TERMINAL**: recent agent output (scrollable with Up/Down)

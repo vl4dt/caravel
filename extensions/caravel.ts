@@ -1,11 +1,8 @@
 /**
  * Caravel Fleet Orchestrator
  *
- * Multi-agent fleet orchestration using only local models.
- *
- * Models:
- *   - Developer/Tech Lead:  llama.cpp @ 10.74.74.151:9090 (Qwen3.6-35B-A3B)
- *   - Designer/Vision:      lm-studio @ 10.74.74.175:1234 (Gemma 4)
+ * Multi-agent fleet orchestration with supervisor-worker pattern, two-stage review loops,
+ * and a non-blocking fleet dashboard. Works with any model provider (local or cloud).
  *
  * UI:
  *   - /fleet command: toggle fleet dashboard (non-blocking widget bar + overlay)
@@ -48,6 +45,12 @@ interface FleetState {
   reviewIterations: number;
   maxReviewIterations: number;
   recentOutput: string;
+  mainAgentActivity?: {
+    status: "idle" | "executing" | "thinking" | "waiting";
+    action: string; // "bash", "read", "edit", "writing", etc.
+    detail: string; // truncated action description
+    timestamp: number;
+  };
 }
 
 interface FleetPhase {
@@ -96,6 +99,12 @@ let fleetState: FleetState = {
   reviewIterations: 0,
   maxReviewIterations: 5,
   recentOutput: "",
+  mainAgentActivity: {
+    status: "idle",
+    action: "idle",
+    detail: "No active work",
+    timestamp: Date.now(),
+  },
 };
 
 // Non-blocking dashboard state (replaces blocking overlay)
@@ -266,6 +275,7 @@ function loadState(ctx: ExtensionContext): void {
         reviewIterations: data.reviewIterations ?? 0,
         maxReviewIterations: data.maxReviewIterations ?? fleetState.maxReviewIterations,
         recentOutput: data.recentOutput ?? "",
+        mainAgentActivity: data.mainAgentActivity ?? fleetState.mainAgentActivity,
       };
     }
   }
@@ -287,6 +297,25 @@ function refreshWidget(ctx: ExtensionContext): void {
       dashboardOverlayHandle?.requestRender();
     }
   }
+}
+
+/**
+ * Set the main agent activity status.
+ * Call this from tool_call events to track what the main agent is doing.
+ */
+function setMainAgentActivity(
+  ctx: ExtensionContext,
+  status: "idle" | "executing" | "thinking",
+  action: string,
+  detail: string,
+): void {
+  fleetState.mainAgentActivity = {
+    status,
+    action,
+    detail: truncateToWidth(detail, 40),
+    timestamp: Date.now(),
+  };
+  refreshWidget(ctx);
 }
 
 function startWidgetRefresh(ctx: ExtensionContext): void {
@@ -430,7 +459,7 @@ async function runSubagent(
 
 /**
  * Build rich multi-line content for the widget bar.
- * Shows useful context during idle and progress during active phases.
+ * Left-bordered, no ragged right edge — fills to consistent width.
  */
 function buildWidgetLines(ctx: ExtensionContext): string[] {
   const th = ctx.ui.theme;
@@ -452,66 +481,117 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
   const activeAgents = fleetState.activeAgents.filter((a) => a.status !== "idle");
   const hasActiveAgents = activeAgents.length > 0;
 
+  const mainAgent = fleetState.mainAgentActivity;
+  const isMainAgentActive = mainAgent?.status === "executing" || mainAgent?.status === "thinking";
+
+  // Dynamic content width: fill full terminal width minus left border "│ " and right border "│"
+  const termWidth = process.stdout.columns || 120;
+  const W = Math.max(30, termWidth - 2); // leave 2 chars for left/right borders
+
   const lines: string[] = [];
 
+  // Helper: pad a line to exactly W visible chars, appending a right border
+  const makeLine = (content: string): string => {
+    const cw = visibleWidth(content);
+    const pad = Math.max(0, W - cw);
+    return `│ ${content}${" ".repeat(pad)}`;
+  };
+
+  // ─ Border top ─
+  lines.push(th.fg("borderMuted", "┌" + "─".repeat(W) + "┐"));
+
   if (fleetState.phases.length === 0) {
-    // Idle state: useful context, not just a clock
+    // ─ IDLE STATE ─
     const agentCount = allAgents.length;
-    lines.push(th.fg("dim", "    CARAVEL FLEET"));
-    lines.push(` ${th.fg("muted", `${agentCount} agent` + (agentCount !== 1 ? "s" : "") + " configured")}  ${th.fg("muted", "○")}`);
-    lines.push(` ${th.fg("dim", "idle".padEnd(56))}`);
-    const pad = Math.max(0, 56 - visibleWidth(` ${th.fg("dim", `· ${fleetState.reviewIterations} reviews  ${elapsedStr}`)}`));
-    lines.push(` ${th.fg("dim", `· ${fleetState.reviewIterations} reviews  ${elapsedStr}`)}${" ".repeat(pad)}`);
+    const statusColor = fleetState.paused ? "warning" : "muted";
+    const statusIcon = fleetState.paused ? "⏸" : "●";
+
+    // Title line
+    const agentInfo = `${agentCount} agent` + (agentCount !== 1 ? "s" : "") + " configured";
+    const titleContent = th.fg("dim", "CARAVEL FLEET") + "  " + th.fg("muted", agentInfo) + "  " + th.fg(statusColor, "STATUS " + statusIcon);
+    lines.push(makeLine(titleContent));
+    lines.push("│" + " ".repeat(W)); // blank spacer
+
+    // Main agent activity line — truncate detail to fit
+    if (isMainAgentActive && mainAgent) {
+      const actColor = mainAgent.status === "thinking" ? "dim" : "accent";
+      const actIcon = mainAgent.status === "thinking" ? "◇" : "▸";
+      const maxDetail = Math.max(10, W - 20);
+      const truncated = mainAgent.detail.length > maxDetail ? mainAgent.detail.slice(0, maxDetail - 1) + "…" : mainAgent.detail;
+      lines.push(makeLine(`${actIcon} ${th.fg(actColor, `${mainAgent.action}: ${truncated}`)}`));
+    } else if (mainAgent && mainAgent.action !== "idle") {
+      const timeAgo = now - mainAgent.timestamp;
+      const timeStr = timeAgo < 60000 ? `${Math.round(timeAgo / 1000)}s ago` : timeAgo < 3600000 ? `${Math.round(timeAgo / 60000)}m ago` : `${Math.round(timeAgo / 3600000)}h ago`;
+      const maxDetail = Math.max(10, W - 30);
+      const truncated = mainAgent.detail.length > maxDetail ? mainAgent.detail.slice(0, maxDetail - 1) + "…" : mainAgent.detail;
+      lines.push(makeLine(th.fg("muted", `last: ${mainAgent.action} → ${truncated} (${timeStr})`)));
+    }
+
+    // Info line
+    lines.push(makeLine(th.fg("muted", `● ${fleetState.reviewIterations} reviews  │  ${elapsedStr}`)));
+
+    // Border bottom
+    lines.push(th.fg("borderMuted", "└" + "─".repeat(W) + "┘"));
     return lines;
   }
 
-  // Active state
+  // ─ ACTIVE STATE ─
   const currentPhase = fleetState.phases[fleetState.currentPhaseIndex];
   const phaseInfo = currentPhase
     ? th.fg("accent", `P${fleetState.currentPhaseIndex + 1}/${fleetState.phases.length}: ${currentPhase.name}`)
     : th.fg("muted", `Phase index out of range (${fleetState.currentPhaseIndex}/${fleetState.phases.length})`);
 
+  // Title line: phase info left, status% right
   const statusIcon = currentPhase
     ? currentPhase.status === "complete" ? th.fg("success", "✓")
     : currentPhase.status === "failed" ? th.fg("error", "✗")
     : (currentPhase.status === "running" || currentPhase.status === "reviewing") ? th.fg("accent", "▸")
     : th.fg("muted", "○")
     : th.fg("muted", "○");
+  const statusRight = statusIcon + th.fg("muted", ` ${progress}%`);
+  lines.push(makeLine(phaseInfo + "  " + statusRight));
 
-  const agentLines = activeAgents.map((a) => {
-    const status = a.status === "running" ? "running" : a.status === "reviewing" ? "reviewing" : "error";
-    const color = status === "running" ? "accent" : status === "reviewing" ? "warning" : "error";
-    const icon = status === "running" ? "▸" : status === "reviewing" ? "↻" : "✗";
-    const task = a.currentTask ? ` ${truncate(a.currentTask, 35)}` : "";
-    return th.fg(color, `${icon} ${a.name}${task}`);
-  });
+  // Progress bar line
+  lines.push(makeLine(th.fg("accent", `[${bar}] ${progress}%`)));
 
-  const titleText = "CARAVEL FLEET";
-  const titleW = visibleWidth(titleText);
-  const dashRepeat = Math.max(1, 56 - titleW);
-  lines.push(th.fg("dim", `    ${titleText}` + "─".repeat(dashRepeat)));
-  lines.push(` ${phaseInfo}  ${th.fg("accent", bar)} ${progress}%  ${statusIcon}`);
-
-  if (hasActiveAgents) {
-    const truncatedAgents = agentLines.map((a) => truncateToWidth(a, 54));
-    lines.push(` ${truncatedAgents.join(`  │  `)}`);
-  } else {
-    lines.push(` ${th.fg("dim", `${completedTasks}/${totalTasks} tasks completed`.padEnd(56))}`);
+  // Main agent activity line (if active) — truncate detail to fit
+  if (isMainAgentActive && mainAgent) {
+    const actColor = mainAgent.status === "thinking" ? "dim" : "accent";
+    const actIcon = mainAgent.status === "thinking" ? "◇" : "▸";
+    const maxDetail = Math.max(10, W - 20);
+    const truncated = mainAgent.detail.length > maxDetail ? mainAgent.detail.slice(0, maxDetail - 1) + "…" : mainAgent.detail;
+    lines.push(makeLine(`${actIcon} ${th.fg(actColor, `${mainAgent.action}: ${truncated}`)}`));
   }
 
+  // Fleet agent lines
+  if (hasActiveAgents) {
+    const agentLines = activeAgents.map((a) => {
+      const status = a.status === "running" ? "running" : a.status === "reviewing" ? "reviewing" : "error";
+      const color = status === "running" ? "accent" : status === "reviewing" ? "warning" : "error";
+      const icon = status === "running" ? "▸" : status === "reviewing" ? "↻" : "✗";
+      const task = a.currentTask ? ` ${truncate(a.currentTask, 20)}` : "";
+      return th.fg(color, `${icon} ${a.name}${task}`);
+    });
+    lines.push(makeLine(`  ${agentLines.join(`  │  `)}`));
+  } else {
+    lines.push(makeLine(th.fg("dim", `${completedTasks}/${totalTasks} tasks`)));
+  }
+
+  // Summary line
   const summaryParts: string[] = [
     `${completedTasks}/${totalTasks} tasks`,
     `${fleetState.reviewIterations} reviews`,
     elapsedStr,
   ];
   if (fleetState.paused) summaryParts.push(th.fg("warning", "PAUSED"));
+  lines.push(makeLine(th.fg("dim", summaryParts.join("  │  "))));
 
-  const summaryText = summaryParts.join("  ·  ");
-  const pad = Math.max(0, 56 - visibleWidth(summaryText));
-  lines.push(` ${th.fg("dim", summaryText)}${" ".repeat(pad)}`);
+  // Border bottom
+  lines.push(th.fg("borderMuted", "└" + "─".repeat(W) + "┘"));
 
   return lines;
 }
+
 
 /**
  * Show the non-capturing overlay dashboard (rich detail view).
@@ -521,7 +601,7 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
 function showDashboardOverlay(ctx: ExtensionContext): void {
   // Auto-close if no phases to show - prevents input capture when idle
   if (fleetState.phases.length === 0) {
-    ctx.ui.notify("No active phases to display", "info");
+    ctx.ui.notify("CARAVEL FLEET: no active phases (fleet is IDLE)", "info");
     return;
   }
   if (dashboardOverlayVisible) return;
@@ -578,11 +658,15 @@ function hideDashboardOverlay(): void {
 function toggleDashboard(ctx: ExtensionContext): void {
   if (dashboardOverlayVisible) {
     hideDashboardOverlay();
-    ctx.ui.notify("Fleet dashboard closed", "info");
+    ctx.ui.notify("CARAVEL: overlay closed", "info");
   } else {
     // Widget bar is always visible via refreshWidget; just show the overlay
+    if (fleetState.phases.length === 0) {
+      ctx.ui.notify("CARAVEL FLEET: idle — no phases to display", "info");
+    } else {
+      ctx.ui.notify("CARAVEL: overlay opened", "info");
+    }
     showDashboardOverlay(ctx);
-    ctx.ui.notify("Fleet dashboard opened", "info");
   }
 }
 
@@ -688,64 +772,104 @@ class DashboardOverlayComponent {
 
   render(width: number): string[] {
     const th = this.theme;
-    const w = Math.min(width - 2, 58);
+    // FIXED width: all panels render at exactly 60 cols, regardless of terminal width
+    const W = 60;
     const pad = (s: string, len: number) => s + " ".repeat(Math.max(0, len - visibleWidth(s)));
     const border = (text: string) => th.fg("border", text);
-    const hline = " ".repeat(w);
+    const borderAccent = (text: string) => th.fg("borderAccent", text);
+    const hline = " ".repeat(W - 2);
     const lines: string[] = [];
 
-    // Header
-    const title = th.fg("accent", "  CARAVEL FLEET DASHBOARD");
-    lines.push(border(`╭${hline}╮`));
-    lines.push(border(` ${pad(title, w - 2)} `));
-    lines.push(border(` ${"─".repeat(Math.min(w - 2, 55))} `));
+    // ── Cyberpunk box frame ──
+    lines.push(borderAccent(`╔${"═".repeat(W - 2)}╗`));
 
-    // Tabs
+    // ── Header row ──
+    const title = th.fg("accent", "CARAVEL FLEET");
+    const statusStr = this.getFleetStatus(th);
+    const headerText = `  ${title}  ${"│".padEnd(2)}  ${statusStr}`;
+    lines.push(borderAccent(`║ ${pad(headerText, W - 2)} ║`));
+
+    // ── Accent bar ──
+    lines.push(borderAccent(`║${"─".repeat(W - 2)}║`));
+
+    // ── Tabs ──
     const tabs = ["TASKS", "AGENTS", "REVIEW", "TERMINAL"];
     const tabLine = tabs.map((t, i) => {
-      const label = i === this.selectedTab ? th.fg("accent", ` ${t} `) : ` ${t} `;
-      return i > 0 ? border(" |") + label : label;
+      const label = i === this.selectedTab ? th.fg("accent", `[${t}]`) : ` [${t}]`;
+      return i > 0 ? " │ " + label : label;
     }).join("");
-    lines.push(border(` ${pad(tabLine, w - 2)} `));
-    lines.push(border(` ${"─".repeat(Math.min(w - 2, 55))} `));
+    lines.push(borderAccent(`║ ${pad(tabLine, W - 2)} ║`));
 
-    // Panel content
-    const panelContent = this.renderPanel(th, w);
+    // ── Panel divider ──
+    lines.push(borderAccent(`║${"─".repeat(W - 2)}║`));
+
+    // ── Panel content ──
+    const panelContent = this.renderPanel(th);
     lines.push(...panelContent);
 
-    // Footer
+    // ── Footer divider ──
+    lines.push(borderAccent(`║${"─".repeat(W - 2)}║`));
+
+    // ── Footer ──
     const fleetStatus = fleetState.phases.length === 0 ? "IDLE"
       : fleetState.paused ? "PAUSED" : "RUNNING";
-    const navHint = fleetState.phases.length > 0 ? "↑↓:nav | Tab:panel | Space:pause | P:skip | Esc:close" : "Esc:close";
-    const footer = th.fg("dim", ` ${formatDuration(Date.now() - fleetState.startTime)} | ${fleetState.reviewIterations} reviews | ${fleetStatus} | ${navHint} `);
-    lines.push(border(` ${pad(footer, w - 2)} `));
-    lines.push(border(`╰${hline}╯`));
+    const statusColor = fleetStatus === "RUNNING" ? "accent" : fleetStatus === "PAUSED" ? "warning" : "muted";
+    const footerLeft = th.fg(statusColor, `[${fleetStatus}]`);
+    const footerRight = `▶↑↓nav │Tab:pan │Sp:pause │P:skip │Esc:close`;
+    lines.push(borderAccent(`║ ${footerLeft} │ ${pad(footerRight, W - 15)} ║`));
+    lines.push(borderAccent(`╚${"═".repeat(W - 2)}╝`));
 
     return lines;
   }
 
-  private renderPanel(th: any, w: number): string[] {
+  private getFleetStatus(th: any): string {
+    if (fleetState.phases.length === 0) return th.fg("muted", "● IDLE");
+    if (fleetState.paused) return th.fg("warning", "⏸ PAUSED");
+    const currentPhase = fleetState.phases[fleetState.currentPhaseIndex];
+    if (!currentPhase) return th.fg("muted", "○ UNKNOWN");
+    if (currentPhase.status === "complete") return th.fg("success", "✓ DONE");
+    if (currentPhase.status === "failed") return th.fg("error", "✗ FAILED");
+    if (currentPhase.status === "running") return th.fg("accent", "▸ RUNNING");
+    if (currentPhase.status === "reviewing") return th.fg("warning", "↻ REV");
+    return th.fg("muted", "○ PENDING");
+  }
+
+  private renderPanel(th: any): string[] {
+    // Fixed width for all panels: W = 60 (from render()), so content width = 58
+    const W = 60;
     const pad = (s: string, len: number) => s + " ".repeat(Math.max(0, len - visibleWidth(s)));
     const border = (text: string) => th.fg("border", text);
+    const borderAccent = (text: string) => th.fg("borderAccent", text);
+    const contentW = W - 4; // subtract "║ " and " ║"
 
     switch (this.selectedTab) {
-      case 0: return this.renderTasksPanel(th, w);
-      case 1: return this.renderAgentsPanel(th, w);
-      case 2: return this.renderReviewPanel(th, w);
-      case 3: return this.renderTerminalPanel(th, w);
-      default: return [border(` ${pad("Unknown panel", w - 2)} `)];
+      case 0: return this.renderTasksPanel(th, contentW, border, borderAccent, pad);
+      case 1: return this.renderAgentsPanel(th, contentW, border, borderAccent, pad);
+      case 2: return this.renderReviewPanel(th, contentW, border, borderAccent, pad);
+      case 3: return this.renderTerminalPanel(th, contentW, border, borderAccent, pad);
+      default: return [border(` ║ ${pad("Unknown panel", contentW)} ║`)];
     }
   }
 
-  private renderTasksPanel(th: any, w: number): string[] {
-    const pad = (s: string, len: number) => s + " ".repeat(Math.max(0, len - visibleWidth(s)));
-    const border = (text: string) => th.fg("border", text);
+  private renderTasksPanel(th: any, contentW: number, border: any, borderAccent: any, pad: any): string[] {
     const lines: string[] = [];
 
     if (fleetState.phases.length === 0) {
-      lines.push(border(` ${pad("Fleet is idle. Use plan_project to define phases and tasks.", w - 2)} `));
+      const agentCount = discoverAgents("both").length;
+      lines.push(borderAccent(`║ ${pad("▶ FLEET IS IDLE", contentW)} ║`));
+      lines.push(border(`║ ${pad(`Agents configured: ${agentCount}  │  Reviews completed: ${fleetState.reviewIterations}`, contentW)} ║`));
+      if (fleetState.mainAgentActivity && fleetState.mainAgentActivity.action !== "idle") {
+        const act = fleetState.mainAgentActivity;
+        lines.push(border(`║ ${pad(`Main agent: ${act.action} → ${act.detail}`, contentW)} ║`));
+      }
+      lines.push(border(`║ ${pad("Use plan_project to define phases and tasks.", contentW)} ║`));
       return lines;
     }
+
+    // Summary header
+    const totalTasks = fleetState.phases.reduce((s: number, p: any) => s + p.tasks.length, 0);
+    const completedTasks = fleetState.phases.reduce((s: number, p: any) => s + p.tasks.filter((t: any) => t.status === "complete").length, 0);
+    lines.push(border(`║ ${pad(`▲ ${completedTasks}/${totalTasks} TASKS COMPLETED ▲`, contentW)} ║`));
 
     for (let i = 0; i < fleetState.phases.length; i++) {
       const phase = fleetState.phases[i]!;
@@ -753,34 +877,35 @@ class DashboardOverlayComponent {
       const isSelected = i === fleetState.currentPhaseIndex;
 
       const statusIcon = this.phaseStatusIcon(phase.status);
+      const statusColor = phase.status === "complete" ? "success" : phase.status === "failed" ? "error" : phase.status === "running" ? "accent" : "muted";
       const name = isCurrent ? th.fg("accent", phase.name) : phase.name;
-      const marker = isSelected ? "  ▸ " : isCurrent ? "    " : "      ";
+      const marker = isSelected ? "▸" : isCurrent ? "·" : "  ";
 
-      const completed = phase.tasks.filter((t) => t.status === "complete").length;
+      const completed = phase.tasks.filter((t: any) => t.status === "complete").length;
       const total = phase.tasks.length;
 
-      lines.push(border(` ${pad(`${marker}${statusIcon} P${i + 1}: ${name}`, w - 2)} `));
+      const phaseLine = `${marker} ${statusIcon} P${i + 1}: ${name}  [${completed}/${total}]`;
+      lines.push(border(`║ ${pad(phaseLine, contentW)} ║`));
 
       if (isCurrent || isSelected) {
         for (let j = 0; j < phase.tasks.length; j++) {
           const task = phase.tasks[j]!;
           const taskSelected = j === this.selectedPhase && isCurrent;
-          const taskMarker = taskSelected ? "    ▸ " : "      ";
+          const taskMarker = taskSelected ? "▸ " : "  ";
           const taskStatus = this.taskStatusIcon(task.status);
           const taskAgent = th.fg("muted", task.agentName);
 
           // Review indicators
           const codeIcon = task.codeReviewStatus === "approved" ? th.fg("success", "+")
             : task.codeReviewStatus === "needs_fix" ? th.fg("error", "!")
-            : task.codeReviewStatus === "pending" ? th.fg("dim", "-")
             : th.fg("dim", "-");
           const desIcon = task.designReviewStatus === "approved" ? th.fg("success", "+")
             : task.designReviewStatus === "needs_fix" ? th.fg("error", "!")
-            : task.designReviewStatus === "pending" ? th.fg("dim", "-")
             : th.fg("dim", "-");
 
-          const taskName = truncate(task.description, 34);
-          lines.push(border(` ${pad(`${taskMarker}${taskStatus} [${taskAgent}] ${taskName} (${codeIcon}${desIcon})`, w - 2)} `));
+          const taskName = truncate(task.description, 30);
+          const taskLine = `${taskMarker}${taskStatus} [${taskAgent}] ${taskName} (${codeIcon}${desIcon})`;
+          lines.push(border(`║ ${pad(taskLine, contentW)} ║`));
         }
       }
     }
@@ -788,42 +913,42 @@ class DashboardOverlayComponent {
     return lines;
   }
 
-  private renderAgentsPanel(th: any, w: number): string[] {
-    const pad = (s: string, len: number) => s + " ".repeat(Math.max(0, len - visibleWidth(s)));
-    const border = (text: string) => th.fg("border", text);
+  private renderAgentsPanel(th: any, contentW: number, border: any, borderAccent: any, pad: any): string[] {
     const lines: string[] = [];
     const agents = discoverAgents("both");
     const active = fleetState.activeAgents;
 
     if (agents.length === 0) {
-      lines.push(border(` ${pad("No agents configured.", w - 2)} `));
+      lines.push(border(`║ ${pad("No agents configured.", contentW)} ║`));
       return lines;
     }
 
+    // Agent list
     for (let i = 0; i < agents.length; i++) {
       const agent = agents[i]!;
       const isActive = active.find((a) => a.name === agent.name);
       const isFocused = i === this.selectedAgent;
       const status = isActive ? isActive.status : "idle";
 
-      const statusStr = status === "running" ? "RUNNING" : status === "reviewing" ? "REV" : status === "error" ? "ERR" : "idle";
+      const statusStr = status === "running" ? "RUN" : status === "reviewing" ? "REV" : status === "error" ? "ERR" : "IDLE";
       const statusColor = status === "running" ? "accent" : status === "reviewing" ? "warning" : status === "error" ? "error" : "muted";
-      const marker = isFocused ? " ▸" : "  ";
+      const marker = isFocused ? "▸" : "  ";
       const name = isFocused ? th.fg("accent", agent.name) : agent.name;
       const modelStr = truncate(agent.model.split("/").pop() || agent.model, 22);
       const taskStr = isActive?.currentTask ? ` | ${truncate(isActive.currentTask, 25)}` : "";
 
-      lines.push(border(` ${pad(`${marker}${name} [${th.fg(statusColor, statusStr)}]`, w - 2)} `));
-      lines.push(border(` ${pad(`    ${modelStr}${taskStr}`, w - 2)} `));
+      lines.push(border(`║ ${pad(`${marker}${name} [${th.fg(statusColor, statusStr)}]`, contentW)} ║`));
+      lines.push(border(`║ ${pad(`  ${modelStr}${taskStr}`, contentW)} ║`));
     }
 
+    // Active agents section
     if (active.length > 0) {
-      lines.push(border(` ${"─".repeat(Math.min(w - 2, 55))} `));
-      lines.push(border(` ${th.fg("accent", "  Active Agents")} `));
+      lines.push(border(`║${"─".repeat(contentW)}║`));
+      lines.push(borderAccent(`║ ${pad("▶ ACTIVE AGENTS", contentW)} ║`));
       for (const agent of active) {
         if (agent.status !== "idle") {
           const taskStr = truncate(agent.currentTask || "N/A", 36);
-          lines.push(border(` ${pad(`    ${agent.name}: ${taskStr}`, w - 2)} `));
+          lines.push(border(`║ ${pad(`  ${agent.name}: ${taskStr}`, contentW)} ║`));
         }
       }
     }
@@ -831,22 +956,19 @@ class DashboardOverlayComponent {
     return lines;
   }
 
-  private renderReviewPanel(th: any, w: number): string[] {
-    const pad = (s: string, len: number) => s + " ".repeat(Math.max(0, len - visibleWidth(s)));
-    const border = (text: string) => th.fg("border", text);
+  private renderReviewPanel(th: any, contentW: number, border: any, borderAccent: any, pad: any): string[] {
     const lines: string[] = [];
 
-    lines.push(border(` ${pad("Two-Stage Review Gate", w - 2)} `));
-    lines.push(border(` ${pad("Iterations: " + fleetState.reviewIterations + " / " + fleetState.maxReviewIterations, w - 2)} `));
-
-    lines.push(border(` ${"─".repeat(Math.min(w - 2, 55))} `));
-    lines.push(border(` ${pad("Stage 1: Code Review (Tech Lead)", w - 2)} `));
-    lines.push(border(` ${pad("  Correctness, security, performance, architecture", w - 2)} `));
-    lines.push(border(` ${pad("  Code quality, testing", w - 2)} `));
-
-    lines.push(border(` ${pad("Stage 2: Design Review (Designer)", w - 2)} `));
-    lines.push(border(` ${pad("  Layout, consistency, accessibility", w - 2)} `));
-    lines.push(border(` ${pad("  UX, polish, visual quality", w - 2)} `));
+    lines.push(border(`║ ${pad("TWO-STAGE REVIEW GATE", contentW)} ║`));
+    lines.push(border(`║ ${pad(`Iterations: ${fleetState.reviewIterations} / ${fleetState.maxReviewIterations}`, contentW)} ║`));
+    lines.push(border(`║${"─".repeat(contentW)}║`));
+    lines.push(border(`║ ${pad("STAGE 1: Code Review (Tech Lead)", contentW)} ║`));
+    lines.push(border(`║ ${pad("  Correctness, security, perf, architecture", contentW)} ║`));
+    lines.push(border(`║ ${pad("  Code quality, testing", contentW)} ║`));
+    lines.push(border(`║`));
+    lines.push(border(`║ ${pad("STAGE 2: Design Review (Designer)", contentW)} ║`));
+    lines.push(border(`║ ${pad("  Layout, consistency, accessibility", contentW)} ║`));
+    lines.push(border(`║ ${pad("  UX, polish, visual quality", contentW)} ║`));
 
     // Review summary
     let codeApproved = 0, codeNeedsFix = 0, designApproved = 0, designNeedsFix = 0;
@@ -860,66 +982,65 @@ class DashboardOverlayComponent {
     }
 
     if (codeApproved + codeNeedsFix + designApproved + designNeedsFix > 0) {
-      lines.push(border(` ${"─".repeat(Math.min(w - 2, 55))} `));
-      lines.push(border(` ${pad("Summary:", w - 2)} `));
-      lines.push(border(` ${pad(`  Code: ${th.fg("success", codeApproved)} approved | ${th.fg("error", codeNeedsFix)} needs fix`, w - 2)} `));
-      lines.push(border(` ${pad(`  Design: ${th.fg("success", designApproved)} approved | ${th.fg("error", designNeedsFix)} needs fix`, w - 2)} `));
+      lines.push(border(`║${"─".repeat(contentW)}║`));
+      lines.push(borderAccent(`║ ${pad("▲ REVIEW SUMMARY ▲", contentW)} ║`));
+      lines.push(border(`║ ${pad(`  Code: ${th.fg("success", codeApproved)} ok  │  ${th.fg("error", codeNeedsFix)} fix`, contentW)} ║`));
+      lines.push(border(`║ ${pad(`  Design: ${th.fg("success", designApproved)} ok  │  ${th.fg("error", designNeedsFix)} fix`, contentW)} ║`));
     }
 
     // Progress bar
     if (fleetState.reviewIterations < fleetState.maxReviewIterations) {
       const pct = Math.round((fleetState.reviewIterations / fleetState.maxReviewIterations) * 100);
-      const barW = 20;
+      const barW = 18;
       const filled = Math.round((pct / 100) * barW);
       const bar = "█".repeat(filled) + "░".repeat(barW - filled);
-      lines.push(border(` ${pad(`[${bar}] ${pct}%`, w - 2)} `));
+      lines.push(border(`║ ${pad(`[${bar}] ${pct}%`, contentW)} ║`));
     }
 
-    lines.push(border(` ${"─".repeat(Math.min(w - 2, 55))} `));
-    lines.push(border(` ${pad("Recent feedback:", w - 2)} `));
+    lines.push(border(`║${"─".repeat(contentW)}║`));
+    lines.push(border(`║ ${pad("RECENT FEEDBACK:", contentW)} ║`));
 
     let foundFeedback = false;
     for (let i = fleetState.phases.length - 1; i >= 0; i--) {
       for (const task of fleetState.phases[i]!.tasks) {
         if (task.reviewFeedback) {
-          const feedback = truncate(task.reviewFeedback, 46);
-          lines.push(border(` ${pad(`  [${fleetState.phases[i]!.name}] ${feedback}`, w - 2)} `));
+          const feedback = truncate(task.reviewFeedback, contentW - 4);
+          lines.push(border(`║ ${pad(`  [${fleetState.phases[i]!.name}] ${feedback}`, contentW)} ║`));
           foundFeedback = true;
           if (foundFeedback) break;
         }
       }
       if (foundFeedback) break;
     }
-    if (!foundFeedback) lines.push(border(` ${pad("  (none yet)", w - 2)} `));
+    if (!foundFeedback) lines.push(border(`║ ${pad("  (none yet)", contentW)} ║`));
 
     return lines;
   }
 
-  private renderTerminalPanel(th: any, w: number): string[] {
-    const pad = (s: string, len: number) => s + " ".repeat(Math.max(0, len - visibleWidth(s)));
-    const border = (text: string) => th.fg("border", text);
+  private renderTerminalPanel(th: any, contentW: number, border: any, borderAccent: any, pad: any): string[] {
     const lines: string[] = [];
 
-    lines.push(border(` ${pad("Recent agent output", w - 2)} `));
-    lines.push(border(` ${"─".repeat(Math.min(w - 2, 55))} `));
+    lines.push(borderAccent(`║ ${pad("▶ AGENT OUTPUT LOG", contentW)} ║`));
+    lines.push(border(`║${"─".repeat(contentW)}║`));
 
     const output = fleetState.recentOutput;
     if (!output) {
-      lines.push(border(` ${pad("(No output yet.)", w - 2)} `));
+      lines.push(border(`║ ${pad("(No output yet.)", contentW)} ║`));
       return lines;
     }
 
     const outputLines = output.split("\n");
-    const maxLines = 12;
-    const start = Math.min(this.terminalScroll, outputLines.length - maxLines);
+    const maxLines = 14;
+    const start = Math.min(this.terminalScroll, Math.max(0, outputLines.length - maxLines));
     const show = outputLines.slice(start, start + maxLines);
 
     for (const line of show) {
-      lines.push(border(` ${pad(truncate(line, w - 2), w - 2)} `));
+      lines.push(border(`║ ${pad(truncate(line, contentW - 2), contentW - 2)} ║`));
     }
 
     if (outputLines.length > maxLines) {
-      lines.push(border(` ${pad(`... (${outputLines.length - maxLines} more)`, w - 2)} `));
+      const remaining = outputLines.length - maxLines;
+      lines.push(border(`║ ${pad(`... ${remaining} more lines`, contentW)} ║`));
     }
 
     return lines;
@@ -956,6 +1077,265 @@ class DashboardOverlayComponent {
 }
 
 // ============================================================================
+// Auto-orchestration helpers
+// ============================================================================
+
+/**
+ * Internal helper to run a single phase (used by /go command).
+ */
+async function runPhaseInternal(
+  phaseIdx: number,
+  ctx: ExtensionContext,
+): Promise<string> {
+  if (phaseIdx < 0 || phaseIdx >= fleetState.phases.length) {
+    return `Invalid phase index: ${phaseIdx}`;
+  }
+
+  const phase = fleetState.phases[phaseIdx]!;
+  phase.status = "running";
+  fleetState.currentPhaseIndex = phaseIdx;
+  saveState();
+  refreshWidget(ctx);
+
+  const results: Array<{ agentName: string; exitCode: number; output: string; stderr: string }> = [];
+  const allAgents = discoverAgents("both");
+
+  for (const task of phase.tasks) {
+    if (task.status === "complete") continue; // skip already done tasks
+
+    const agentDef = allAgents.find((a) => a.name === task.agentName);
+    if (!agentDef) {
+      task.status = "failed";
+      results.push({ agentName: task.agentName, exitCode: 1, output: "", stderr: `Agent "${task.agentName}" not found` });
+      continue;
+    }
+
+    task.status = "running";
+    fleetState.activeAgents = fleetState.activeAgents.map((a) =>
+      a.name === agentDef.name
+        ? { ...a, status: "running" as const, currentTask: truncate(task.description, 30) }
+        : a
+    );
+
+    if (!fleetState.activeAgents.find((a) => a.name === agentDef.name)) {
+      fleetState.activeAgents.push({
+        name: agentDef.name,
+        status: "running" as const,
+        currentTask: truncate(task.description, 30),
+        model: agentDef.model,
+      });
+    }
+
+    refreshWidget(ctx);
+
+    const result = await runSubagent(agentDef, task.description, ctx.cwd);
+    task.output = result.output;
+    task.status = result.exitCode === 0 ? "complete" as const : "failed" as const;
+    fleetState.recentOutput = result.output || result.stderr;
+
+    fleetState.activeAgents = fleetState.activeAgents.map((a) =>
+      a.name === agentDef.name
+        ? {
+            ...a,
+            status: result.exitCode === 0 ? "idle" as const : "error" as const,
+            currentTask: undefined,
+            model: agentDef.model,
+            tokensUsed: result.usage?.input + result.usage?.output,
+            turns: result.usage?.turns,
+          }
+        : a
+    );
+
+    results.push({ agentName: task.agentName, exitCode: result.exitCode, output: result.output, stderr: result.stderr });
+  }
+
+  const allDone = phase.tasks.every((t) => t.status === "complete");
+  phase.status = allDone ? "complete" : (phase.tasks.some((t) => t.status === "failed") ? "failed" : "reviewing");
+  phase.completedAt = Date.now();
+
+  fleetState.activeAgents = fleetState.activeAgents.filter((a) => a.status !== "running");
+
+  saveState();
+  refreshWidget(ctx);
+
+  const successCount = results.filter((r) => r.exitCode === 0).length;
+  const summary = phase.tasks.map((t) => {
+    const icon = t.status === "complete" ? "✓" : t.status === "failed" ? "✗" : t.status;
+    return `  ${icon} ${t.agentName}: ${truncate(t.description, 50)}`;
+  }).join("\n");
+
+  return `Phase "${phase.name}" complete: ${successCount}/${phase.tasks.length} tasks succeeded.\n${summary}`;
+}
+
+/**
+ * Internal helper to run review on a phase (used by /go command).
+ */
+async function runReviewInternal(
+  phaseIdx: number,
+  ctx: ExtensionContext,
+): Promise<string> {
+  const phase = fleetState.phases[phaseIdx];
+  if (!phase) return "No phase to review";
+
+  const incompleteTasks = phase.tasks.filter((t) => t.status !== "complete");
+  if (incompleteTasks.length === 0) {
+    return "All tasks complete. No review needed.";
+  }
+
+  // Find tasks ready for review
+  const tasksToReview = incompleteTasks.filter((t) => t.status === "complete" || t.status === "needs_fix");
+  if (tasksToReview.length === 0) {
+    return "No tasks ready for review yet.";
+  }
+
+  fleetState.reviewIterations++;
+  saveState();
+  refreshWidget(ctx);
+
+  // Code review
+  const codeResult = await runCodeReview(phaseIdx, undefined, ctx);
+  const designResult = await runDesignReview(phaseIdx, undefined, ctx);
+
+  let allApproved = true;
+
+  for (const task of tasksToReview) {
+    task.reviewFeedback = "";
+
+    // Evaluate code review
+    if (codeResult.approved) {
+      task.codeReviewStatus = "approved";
+    } else {
+      task.codeReviewStatus = "needs_fix";
+      task.codeReviewFeedback = codeResult.feedback;
+      task.reviewFeedback += `[CODE REVIEW - ${codeResult.agentUsed}]:\n${codeResult.feedback}\n\n`;
+      allApproved = false;
+    }
+
+    // Evaluate design review
+    if (designResult.approved) {
+      task.designReviewStatus = "approved";
+    } else {
+      task.designReviewStatus = "needs_fix";
+      task.designReviewFeedback = designResult.feedback;
+      task.reviewFeedback += `[DESIGN REVIEW - ${designResult.agentUsed}]:\n${designResult.feedback}\n\n`;
+      allApproved = false;
+    }
+
+    // Auto-fix if under max iterations
+    if (!allApproved && task.reviewCount < task.maxReviewCount) {
+      task.status = "needs_fix";
+
+      if (codeResult.approved === false && task.codeReviewFeedback) {
+        await runDeveloperFix(task, task.codeReviewFeedback, "code", undefined, ctx);
+      }
+      if (designResult.approved === false && task.designReviewFeedback) {
+        await runDeveloperFix(task, task.designReviewFeedback, "design", undefined, ctx);
+      }
+
+      // Re-evaluate after fix
+      if (codeResult.approved === false) {
+        const recheckCode = await runCodeReview(phaseIdx, undefined, ctx);
+        if (recheckCode.approved) {
+          task.codeReviewStatus = "approved";
+        } else {
+          task.codeReviewFeedback = recheckCode.feedback;
+        }
+      }
+      if (designResult.approved === false) {
+        const recheckDesign = await runDesignReview(phaseIdx, undefined, ctx);
+        if (recheckDesign.approved) {
+          task.designReviewStatus = "approved";
+        } else {
+          task.designReviewFeedback = recheckDesign.feedback;
+        }
+      }
+    } else if (!allApproved) {
+      task.status = "failed";
+    }
+  }
+
+  const codeApproved = codeResult.approved ? "✓ APPROVED" : "✗ NEEDS FIX";
+  const designApproved = designResult.approved ? "✓ APPROVED" : "✗ NEEDS FIX";
+
+  return `Review #${fleetState.reviewIterations}: Code: ${codeApproved} | Design: ${designApproved}`;
+}
+
+/**
+ * Internal helper to analyze an existing codebase.
+ */
+async function runAnalysisPhase(ctx: ExtensionContext): Promise<FleetTask[]> {
+  const allAgents = discoverAgents("both");
+  const analyzer = allAgents.find((a) => a.name === "auditor") ?? allAgents.find((a) => a.name === "developer");
+  if (!analyzer) {
+    return [{
+      id: generateId(),
+      agentName: "none",
+      description: "No analyzer agent available",
+      status: "failed" as const,
+      reviewCount: 0,
+      maxReviewCount: 3,
+    }];
+  }
+
+  // Run analysis subagent
+  const analysisPrompt = `
+You are analyzing an existing codebase. Perform the following analysis:
+
+1. **Project Structure**: List all top-level directories and key files
+2. **Tech Stack**: Identify the programming languages, frameworks, build tools, and dependencies
+3. **Architecture**: Describe the overall architecture (MVC, microservices, monorepo, etc.)
+4. **Entry Points**: Identify main entry files (index.ts, main.ts, App.tsx, etc.)
+5. **Dependencies**: List key dependencies from package.json, requirements.txt, Cargo.toml, etc.
+6. **Test Coverage**: Identify test files and test framework used
+7. **Configuration**: Note key config files (tsconfig.json, webpack.config.js, docker-compose.yml, etc.)
+
+Provide a structured analysis report in the following format:
+
+# Codebase Analysis Report
+
+## Project Overview
+[language, framework, purpose]
+
+## Directory Structure
+[brief overview of main directories]
+
+## Tech Stack
+- Languages: [...]
+- Frameworks: [...]
+- Build Tools: [...]
+- Dependencies: [...]
+
+## Architecture
+[description of architectural pattern]
+
+## Entry Points
+[file paths]
+
+## Test Coverage
+[test framework, key test files, coverage status]
+
+## Configuration
+[key config files]
+
+## Recommendations
+[suggestions for next steps based on the codebase state]
+`;
+
+  const result = await runSubagent(analyzer, analysisPrompt, ctx.cwd);
+
+  return [{
+    id: generateId(),
+    agentName: analyzer.name,
+    description: "Codebase Analysis - scan structure, detect tech stack, map dependencies",
+    status: result.exitCode === 0 ? "complete" as const : "failed" as const,
+    output: result.output,
+    reviewFeedback: result.stderr,
+    reviewCount: 0,
+    maxReviewCount: 3,
+  }];
+}
+
+// ============================================================================
 // Main extension
 // ============================================================================
 
@@ -973,11 +1353,83 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("agent_end", async (event, ctx) => {
+    // Track main agent activity
+    const lastMsg = event.messages?.[event.messages.length - 1];
+    if (lastMsg?.role === "assistant") {
+      let action = "idle";
+      let detail = "Turn complete";
+      for (const part of lastMsg.content) {
+        if (part.type === "tool_use") {
+          const toolName = part.name;
+          action = toolName;
+          // Extract useful detail from input
+          const inputStr = JSON.stringify(part.input || {});
+          if (toolName === "bash" && part.input?.command) {
+            action = "bash";
+            detail = truncateToWidth(part.input.command, 40);
+          } else if (toolName === "read" && part.input?.path) {
+            action = "read";
+            detail = truncateToWidth(part.input.path, 40);
+          } else if (toolName === "edit" && part.input?.path) {
+            action = "edit";
+            detail = truncateToWidth(part.input.path, 40);
+          } else if (toolName === "write" && part.input?.path) {
+            action = "write";
+            detail = truncateToWidth(part.input.path, 40);
+          } else {
+            action = toolName;
+            detail = truncateToWidth(inputStr.slice(0, 50), 40);
+          }
+          break;
+        }
+        if (part.type === "text") {
+          action = "response";
+          detail = truncateToWidth(part.text.slice(0, 60), 40);
+        }
+      }
+      fleetState.mainAgentActivity = {
+        status: "idle", // Turn finished, so agent is idle now
+        action,
+        detail,
+        timestamp: Date.now(),
+      };
+    }
     refreshWidget(ctx);
     saveState();
     // Refresh overlay if visible
     if (dashboardOverlayVisible && dashboardOverlayHandle) {
       dashboardOverlayHandle.requestRender();
+    }
+  });
+
+  pi.on("tool_call", async (event, ctx) => {
+    // Track when main agent starts executing a tool
+    const toolName = event.toolName;
+    if (toolName && fleetState.mainAgentActivity?.status !== "executing") {
+      let action = toolName;
+      let detail = "";
+      if (toolName === "bash" && event.input?.command) {
+        action = "bash";
+        detail = truncateToWidth(event.input.command, 40);
+      } else if (toolName === "read" && event.input?.path) {
+        action = "read";
+        detail = truncateToWidth(event.input.path, 40);
+      } else if (toolName === "edit" && event.input?.path) {
+        action = "edit";
+        detail = truncateToWidth(event.input.path, 40);
+      } else if (toolName === "write" && event.input?.path) {
+        action = "write";
+        detail = truncateToWidth(event.input.path, 40);
+      } else {
+        detail = truncateToWidth(JSON.stringify(event.input).slice(0, 50), 40);
+      }
+      fleetState.mainAgentActivity = {
+        status: "executing",
+        action,
+        detail,
+        timestamp: Date.now(),
+      };
+      refreshWidget(ctx);
     }
   });
 
@@ -992,6 +1444,140 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("fleet", {
     description: "Toggle fleet dashboard (non-blocking widget bar + overlay)",
     handler: async (_args, ctx) => toggleDashboard(ctx),
+  });
+
+  // ---- Auto-orchestration commands ----
+
+  /**
+   * /go command — auto-orchestrates the fleet.
+   * If phases exist: runs them all sequentially with review between each.
+   * If no phases: returns helpful message telling user to first plan.
+   */
+  pi.registerCommand("go", {
+    description: "Auto-orchestrate the fleet: run all phases sequentially with review between each",
+    handler: async (_args, ctx) => {
+      if (fleetState.phases.length === 0) {
+        return { content: [{ type: "text", text: `Fleet is idle. No phases defined.
+
+To start, either:
+  1. Use plan_project() to define phases, then call /go again
+  2. Describe your project in natural language and the planner agent will create the plan` }] };
+      }
+
+      // Auto-open dashboard
+      showDashboardOverlay(ctx);
+
+      const results: string[] = [];
+      let currentIdx = fleetState.currentPhaseIndex;
+      let phaseIndex = currentIdx;
+
+      // Run remaining phases sequentially
+      while (phaseIndex < fleetState.phases.length) {
+        const phase = fleetState.phases[phaseIndex];
+
+        // Skip already complete phases
+        if (phase.status === "complete") {
+          results.push(`✅ Phase ${phaseIndex + 1} "${phase.name}" — already complete`);
+          phaseIndex++;
+          continue;
+        }
+
+        // Skip failed phases unless they're the current one
+        if (phase.status === "failed" && phaseIndex !== currentIdx) {
+          results.push(`⚠️ Phase ${phaseIndex + 1} "${phase.name}" — failed, skipping`);
+          phaseIndex++;
+          continue;
+        }
+
+        results.push(`\n▶ Running Phase ${phaseIndex + 1}/${fleetState.phases.length}: "${phase.name}"`);
+        fleetState.currentPhaseIndex = phaseIndex;
+        saveState();
+        refreshWidget(ctx);
+
+        // Run the phase
+        const phaseResult = await runPhaseInternal(phaseIndex, ctx);
+        results.push(phaseResult);
+
+        // Run review if phase has complete or needs_fix tasks
+        const hasReviewableTasks = phase.tasks.some(
+          (t) => t.status === "complete" || t.status === "needs_fix"
+        );
+
+        if (hasReviewableTasks) {
+          results.push(`\n🔍 Reviewing Phase ${phaseIndex + 1}...`);
+          const reviewResult = await runReviewInternal(phaseIndex, ctx);
+          results.push(reviewResult);
+
+          // If review found issues, run phase again
+          const phaseStillIncomplete = phase.tasks.some(
+            (t) => t.status !== "complete"
+          );
+          if (phaseStillIncomplete) {
+            results.push(`\n🔁 Re-running Phase ${phaseIndex + 1} after review fixes...`);
+            const rerunResult = await runPhaseInternal(phaseIndex, ctx);
+            results.push(rerunResult);
+          }
+        }
+
+        // Check if phase is now complete
+        const phaseComplete = phase.tasks.every((t) => t.status === "complete");
+        if (phaseComplete) {
+          phase.status = "complete";
+          phase.completedAt = Date.now();
+          results.push(`✅ Phase ${phaseIndex + 1} "${phase.name}" complete`);
+        }
+
+        saveState();
+        refreshWidget(ctx);
+        phaseIndex++;
+      }
+
+      // Check if all phases are done
+      const allComplete = fleetState.phases.every((p) => p.status === "complete");
+      if (allComplete) {
+        results.push(`\n🎉 All phases complete! Fleet has finished.`);
+      }
+
+      return { content: [{ type: "text", text: results.join("\n") }] };
+    },
+  });
+
+  /**
+   * /analyze command — for taking over an existing codebase.
+   * Runs a discovery phase that scans project structure, detects tech stack,
+   * maps dependencies, and produces a structured analysis report.
+   */
+  pi.registerCommand("analyze", {
+    description: "Analyze an existing codebase: scan structure, detect tech stack, map dependencies",
+    handler: async (_args, ctx) => {
+      ctx.ui.notify("Analyzing codebase...", "info");
+
+      // Create an analysis phase
+      const analysisPhase: FleetPhase = {
+        id: generateId(),
+        name: "Codebase Analysis",
+        status: "running",
+        tasks: [],
+      };
+
+      // Run analysis tasks
+      const analysisTasks = await runAnalysisPhase(ctx);
+      analysisPhase.tasks = analysisTasks;
+
+      fleetState.phases = [analysisPhase];
+      fleetState.currentPhaseIndex = 0;
+      fleetState.startTime = fleetState.startTime || Date.now();
+      fleetState.reviewIterations = 0;
+
+      saveState();
+      refreshWidget(ctx);
+      showDashboardOverlay(ctx);
+
+      return {
+        content: [{ type: "text", text: `Codebase analysis complete. Use plan_project() to create a full implementation plan based on the analysis, then call /go to run it.` }],
+        details: { phase: analysisPhase },
+      };
+    },
   });
 
   // ---- Tools ----
@@ -1462,9 +2048,9 @@ Status: idle | Reviews: ${fleetState.reviewIterations} | Elapsed: ${formatDurati
   pi.registerTool({
     name: "fleet_control",
     label: "Fleet Control",
-    description: "Pause, resume, skip phase, or reset fleet state.",
+    description: "Pause, resume, skip phase, move to next phase, reset fleet state, or auto-orchestrate all remaining phases with review.",
     parameters: Type.Object({
-      action: Type.String({ description: "pause | resume | skip | next | reset" }),
+      action: Type.String({ description: "pause | resume | skip | next | reset | go" }),
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
@@ -1504,15 +2090,29 @@ Status: idle | Reviews: ${fleetState.reviewIterations} | Elapsed: ${formatDurati
             reviewIterations: 0,
             maxReviewIterations: 5,
             recentOutput: "",
+            mainAgentActivity: {
+              status: "idle",
+              action: "idle",
+              detail: "No active work",
+              timestamp: Date.now(),
+            },
           };
           saveState();
           refreshWidget(ctx);
           return { content: [{ type: "text", text: "Fleet state reset" }], details: {} };
+        case "go":
+          if (fleetState.phases.length === 0) {
+            return { content: [{ type: "text", text: "Fleet is idle. No phases defined. Use plan_project() first." }], details: {} };
+          }
+          // Trigger /go by calling the auto-orchestration
+          // This will be handled by the /go command registration above
+          // For tool invocation, we just report readiness
+          return { content: [{ type: "text", text: "Fleet ready to run. Use /go command or plan_project() to define phases first." }], details: {} };
         default:
           return { content: [{ type: "text", text: `Unknown action: ${params.action}` }], details: {} };
       }
     },
 
-    promptSnippet: "Control fleet execution: pause, resume, skip, or reset",
+    promptSnippet: "Control fleet execution: pause, resume, skip, next, reset, or go (auto-orchestrate)",
   });
 }
