@@ -199,17 +199,22 @@ Describe your goal for an existing project:
 
 > **You:** "I want to add dark mode support to this existing React app."
 
-The main agent will:
-1. **Analyze** — scan the existing codebase structure, tech stack, and dependencies
-2. **Plan** — create incremental phases that build on what exists
-3. **Execute** — run phases with the fleet, reviewing at each step
+The recommended workflow:
 
-Or manually run `/analyze` to get a detailed codebase analysis report. The report includes:
-- **Pre-flight scan**: files/dirs count, detected languages, frameworks, entry points
-- **Agent & model metadata**: which agent ran, which model, tools available
-- **Execution stats**: elapsed time, turns, input/output/cache tokens, cost estimate
-- **The analysis report** from the agent
-- **Actionable error guidance** if anything failed
+1. **Analyze** — run `/analyze` to produce `ANALYSIS.md` with:
+   - **Pre-flight scan**: files/dirs count, detected languages, frameworks, entry points
+   - **Agent & model metadata**: which agent ran, which model, tools available
+   - **Execution stats**: elapsed time, turns, input/output/cache tokens, cost estimate
+   - **Full analysis report** from the auditor agent
+   - **Actionable error guidance** if anything failed
+
+2. **Plan** — run `/plan` to convert the analysis into phases/tasks → `PLAN.md`
+
+3. **Execute** — run `/go` to auto-orchestrate the fleet
+
+If you want to skip analysis:
+1. **Plan** — `plan_project()` directly if scope is clear
+2. **Execute** — `/go` to run phases with review
 
 ### Run /go — Auto-Orchestrate the Fleet
 
@@ -300,6 +305,30 @@ review_task(phaseIndex=0, feedback="...")           // Manual feedback (bypasses
 
 These are for advanced use — you can invoke them from the agent if needed, but the default workflow uses natural language.
 
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `/analyze` | Run a codebase analysis — produces `ANALYSIS.md` with pre-flight scan, tech stack, dependencies, architecture, technical debt, and recommendations |
+| `/plan` | Read `ANALYSIS.md` (or `PROJECT-DESIGN.md`) and generate `PLAN.md` with phases and tasks |
+| `/go` | Auto-run all phases with review between each |
+| `/fleet` | Toggle the fleet widget bar visibility |
+| `/diagnose` | Diagnose failed phases/tasks with structured root-cause analysis |
+
+### Workflow: Taking Over an Existing Codebase
+
+1. **Analyze** — run `/analyze` to scan the codebase and save `ANALYSIS.md`
+2. **Plan** — run `/plan` to convert the analysis into a phased project plan (`PLAN.md`)
+3. **Execute** — use `/go` to auto-orchestrate the fleet through the plan
+4. **Monitor** — watch progress via the widget bar or `fleet_status`
+
+### Workflow: Starting a New Project
+
+1. **Describe** what you want to build (natural language)
+2. **Plan** — the main agent decomposes your idea via `plan_project`
+3. **Execute** — `/go` auto-orchestrates phases with review
+4. **Iterate** — fix review feedback, advance to next phase
+
 ## File Structure
 
 ```
@@ -310,6 +339,8 @@ caravel/
 ├── LICENSE
 ├── PROJECT-DESIGN.md     # Dashboard design architecture doc
 ├── PROJECT-PLAN.md       # Project roadmap and assessment
+├── ANALYSIS.md           # Generated: codebase analysis report (from /analyze)
+├── PLAN.md               # Generated: project plan with phases and tasks (from /plan)
 ├── examples/             # Example models.json configurations
 │   ├── models-llama-cpp-lm-studio.json
 │   ├── models-ollama.json
@@ -323,6 +354,9 @@ caravel/
 │   ├── planner.md        # Conversational planner (interviews user, generates plans)
 │   └── auditor.md        # Codebase analyzer (scans existing projects)
 ├── skills/
+│   ├── analyze.md        # /analyze command — run codebase analysis, produce ANALYSIS.md
+│   ├── plan.md           # /plan command — read analysis/design docs, produce PLAN.md
+│   ├── progress.md       # Progress feedback templates for all phase types
 │   ├── code-review.md    # Code review checklist for tech-lead
 │   ├── design-review.md  # Design review checklist for designer
 │   └── fleet-orchestration.md  # Auto-orchestration guidance for the main agent

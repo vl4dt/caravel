@@ -6,6 +6,49 @@ allowed-tools: plan_project,run_phase,review_task,fleet_control,fleet_status,fle
 
 # Caravel Fleet Orchestration
 
+## Available Skills
+
+| Skill | Command | Purpose |
+|-------|---------|----------|
+| `analyze.md` | `/analyze` | Run codebase analysis → produces `ANALYSIS.md` with pre-flight scan, tech stack, dependencies, architecture, technical debt, and recommendations |
+| `plan.md` | `/plan` | Read `ANALYSIS.md` or `PROJECT-DESIGN.md` → produce `PLAN.md` with phases and tasks |
+| `progress.md` | — | Progress feedback templates for all phase types (analyze, plan, build, review) |
+| `fleet-orchestration.md` | — | Auto-orchestration guidance for the main agent |
+| `code-review.md` | — | Code review checklist for the tech-lead agent |
+| `design-review.md` | — | Design review checklist for the designer agent |
+
+## Complete Workflow
+
+### Scenario 1: Take Over an Existing Codebase
+
+```
+analyze   →  /analyze  →  ANALYSIS.md  →  /plan  →  PLAN.md  →  /go  →  execute
+```
+
+1. **Analyze** — run `/analyze` to produce `ANALYSIS.md`
+2. **Plan** — run `/plan` to convert analysis into phases/tasks → `PLAN.md`
+3. **Execute** — run `/go` to auto-orchestrate the fleet
+4. **Monitor** — watch via widget bar or `fleet_status`
+
+### Scenario 2: Start a New Project
+
+1. **Describe** what you want in natural language
+2. **Plan** — `plan_project()` to decompose into phases
+3. **Execute** — `/go` auto-orchestrates phases with review
+4. **Iterate** — fix review feedback, advance to next phase
+
+## Key Files
+
+| File | Generated? | Description |
+|------|-----------|-------------|
+| `ANALYSIS.md` | Yes (from `/analyze`) | Codebase analysis report |
+| `PLAN.md` | Yes (from `/plan`) | Project plan with phases and tasks |
+| `PROJECT-DESIGN.md` | Yes (from `/analyze`) | Architecture/design overview |
+| `PROJECT-PLAN.md` | Yes (from `/plan`) | Project roadmap |
+| `SKILL.md` | No | Main skill definition (this file) |
+
+---
+
 You are the captain of a fleet of specialized AI agents. Use caravel to build complete applications from start to finish — entirely through natural language, no TypeScript needed from the user.
 
 ## Architecture
@@ -66,9 +109,14 @@ User: "I want to add dark mode to this existing React app"
 ```
 
 You respond:
-1. **Analyze first** — Use the auditor agent or run `/analyze` to understand the existing codebase
-2. **Plan incrementally** — Create phases that build on what exists
-3. **Run with `/go`** — Auto-orchestrates everything with review
+1. **Analyze** — run `/analyze` to produce `ANALYSIS.md` with full codebase scan
+2. **Plan** — run `/plan` to convert analysis into phases/tasks → `PLAN.md`
+3. **Execute** — run `/go` to auto-orchestrate the fleet
+4. **Monitor** — watch progress via the widget bar or `fleet_status`
+
+If the user wants to jump straight to planning:
+1. **Plan** — `plan_project()` directly if scope is clear
+2. **Execute** — `/go` to run phases with review
 
 ### The /go Command
 
