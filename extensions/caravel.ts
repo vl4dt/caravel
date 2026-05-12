@@ -1665,36 +1665,57 @@ async function runAnalysisPhase(ctx: ExtensionContext, onUpdate?: (content: Arra
 3. **Architecture**: Describe the overall pattern (MVC, monorepo, microservices, etc.)
 4. **Entry Points**: Find main entry files (index.ts, main.ts, App.tsx, etc.)
 5. **Dependencies**: List key packages from package.json, requirements.txt, Cargo.toml, etc.
-6. **Test Coverage**: Identify test files and frameworks in use
-7. **Configuration**: Note key config files (tsconfig, webpack, docker-compose, etc.)
+6. **Test Coverage**: Identify test files, frameworks, and estimate coverage gaps.
+7. **Configuration**: Note key config files (tsconfig, webpack, docker-compose, etc.) and their purpose.
+8. **Technical Debt**: Identify code smells, outdated patterns, missing tests, and TODOs.
+9. **Security**: Note any security concerns (hardcoded secrets, missing input validation, etc.).
+
+## IMPORTANT: File Output
+You MUST save your complete analysis report to the file "ANALYSIS.md" in the project root. Write it using the write tool.
 
 ## Provide Your Report In This Format:
 
-# Codebase Analysis
+# Codebase Analysis Report
 
 ## Overview
 [language, framework, purpose in 2-3 sentences]
 
 ## Structure
-[brief directory overview]
+[brief directory overview with purpose of each major directory]
 
 ## Tech Stack
-- Languages: [...]
-- Frameworks: [...]
-- Build Tools: [...]
-- Key Dependencies: [...]
+- Languages: [language@version]
+- Frameworks: [framework@version]
+- Build Tools: [tool@version]
+- Package Manager: [npm/pnpm/yarn/etc.]
 
 ## Architecture
-[description]
+[Detailed description of architectural patterns, module organization, data flow, layer boundaries]
 
 ## Entry Points
-[file paths]
+- [file path] — [purpose/role]
+
+## Dependencies
+### Production
+- [package@version] — [purpose]
+### Development
+- [package@version] — [purpose]
 
 ## Test Coverage
-[test framework, key test files, coverage status]
+- Framework: [name]
+- Coverage estimate: [%]
+- Key test files: [paths]
+- Gaps: [what's missing]
+
+## Technical Debt
+- [Issue] → [file/path:line] — [impact]
+
+## Security Findings
+- [Issue] → [file/path] — [risk level]
 
 ## Recommendations
-[what to do next based on the codebase state]`;
+1. [Priority] Action — why + which files
+2. [Priority] Action — why + which files`;
 
   const startTime = Date.now();
 
@@ -1723,6 +1744,13 @@ async function runAnalysisPhase(ctx: ExtensionContext, onUpdate?: (content: Arra
     fleetState.totalFleetTokens += tokens.total;
 
     if (result.exitCode === 0 && analysisTask.output) {
+      // Persist the full analysis to ANALYSIS.md
+      const analysisPath = path.join(ctx.cwd, "ANALYSIS.md");
+      try {
+        await fs.promises.writeFile(analysisPath, analysisTask.output.trim(), "utf-8");
+      } catch {
+        // Non-fatal — analysis text is still returned
+      }
       return {
         agent: analyzer,
         task: analysisTask,
@@ -1784,8 +1812,8 @@ function generateDesignDocument(result: AnalysisResult, ctx: ExtensionContext): 
 
   lines.push(`# ${getProjectName(ctx.cwd)} — Design Document`);
   lines.push("");
-  lines.push("> Generated: ${now} from codebase analysis");
-  lines.push("> Source: " + result.agent.name + " agent (model: " + (result.agent.model || "unknown") + ")");
+  lines.push(`> Generated: ${now} from codebase analysis`);
+  lines.push(`> Source: ${result.agent.name} agent (model: ${result.agent.model || "unknown"})`);
   lines.push("> Scope: architecture, tech stack, design patterns, structural analysis");
   lines.push("");
   lines.push("---");
@@ -1794,7 +1822,20 @@ function generateDesignDocument(result: AnalysisResult, ctx: ExtensionContext): 
   // --- Architecture ---
   lines.push("## Architecture");
   lines.push("");
-  lines.push(result.output ? extractSection(result.output, "Architecture") : "Architecture details available in ANALYSIS.md");
+  const archSection = result.output ? extractSection(result.output, "Architecture") : "";
+  if (archSection && archSection.length > 10) {
+    lines.push(archSection);
+  } else {
+    lines.push("**Full architectural analysis available in [ANALYSIS.md](./ANALYSIS.md)**");
+    // Provide useful content from pre-flight scan
+    lines.push("");
+    lines.push("**Detected patterns from codebase scan:**");
+    if (pf.languages.length > 0) lines.push(`- **Languages**: ${pf.languages.join(", ")}`);
+    if (pf.frameworks.length > 0) lines.push(`- **Frameworks**: ${pf.frameworks.join(", ")}`);
+    if (pf.buildTools.length > 0) lines.push(`- **Build Tools**: ${pf.buildTools.join(", ")}`);
+    if (pf.techStack.length > 0) lines.push(`- **Stack Items**: ${pf.techStack.join(", ")}`);
+    if (pf.entryPoints.length > 0) lines.push(`- **Entry Points**: ${pf.entryPoints.slice(0, 10).join(", ")}${pf.entryPoints.length > 10 ? "..." : ""}`);
+  }
   lines.push("");
 
   // --- Tech Stack ---
@@ -1806,7 +1847,7 @@ function generateDesignDocument(result: AnalysisResult, ctx: ExtensionContext): 
   if (pf.techStack.length > 0) lines.push(`- **Stack Items**: ${pf.techStack.join(", ")}`);
   lines.push("");
 
-  // --- Structure ---
+  // --- Project Structure (from pre-flight scan) ---
   lines.push("## Project Structure");
   lines.push("");
   lines.push(`- **Total Files**: ${pf.totalFiles.toLocaleString()}`);
@@ -1816,7 +1857,7 @@ function generateDesignDocument(result: AnalysisResult, ctx: ExtensionContext): 
   lines.push(`- **CI/CD Pipeline**: ${pf.hasCI ? "✓ Detected" : "✗ Not detected"}`);
   lines.push("");
 
-  // --- Entry Points ---
+  // --- Directory layout ---
   if (pf.entryPoints.length > 0) {
     lines.push("## Entry Points");
     lines.push("");
@@ -1924,13 +1965,36 @@ function generatePlanDocument(
 
 /**
  * Extract a section from the analysis output by header.
+ * Handles both "## SectionName" and "## Section Name" formats.
+ * Falls back to looking for "### SectionName" or just the section name.
  */
 function extractSection(output: string, section: string): string {
-  const start = output.indexOf(`## ${section}`);
+  // Try exact match: "## SectionName"
+  let start = output.indexOf(`## ${section}`);
+  // Try hyphenated: "## Section-Name" → "SectionName"
+  if (start < 0) {
+    const hyphenated = section.replace(/\s+/g, "-").toLowerCase();
+    const lowerOutput = output.toLowerCase();
+    const idx = lowerOutput.indexOf(`## ${hyphenated}`);
+    if (idx >= 0) start = idx;
+  }
   if (start < 0) return "";
-  const next = output.indexOf("## ", start + 3);
-  const end = next > start ? next : output.length;
-  return output.slice(start + 3 + section.length + 2, end).trim();
+
+  // Find the start of content: skip the "## SectionName" line itself
+  const headerEnd = output.indexOf("\n", start);
+  if (headerEnd < 0) return "";
+
+  // Find next section header at same or deeper level (## or ###)
+  let next = output.indexOf("\n## ", headerEnd + 1);
+  if (next < 0) {
+    next = output.indexOf("\n### ", headerEnd + 1);
+  }
+  const end = next > headerEnd ? next : output.length;
+
+  // Content starts after the header line's newline, skip blank lines
+  let contentStart = headerEnd + 1;
+  while (contentStart < end && output[contentStart] === "\n") contentStart++;
+  return output.slice(contentStart, end).trim();
 }
 
 /**
@@ -2233,11 +2297,20 @@ export default function (pi: ExtensionAPI) {
         }
       }
 
+      // ── Files produced ──
+      if (result.success) {
+        response += section("Files Produced");
+        response += `  ${th ? th.fg("dim", "○") : "○"} [ANALYSIS.md](./ANALYSIS.md) — Full codebase analysis report\n`;
+        response += `  ${th ? th.fg("dim", "○") : "○"} [PROJECT-DESIGN.md](./PROJECT-DESIGN.md) — Architecture & design overview\n`;
+        response += "\n";
+      }
+
       // ── Next steps ──
       if (result.success) {
         response += section("Next Steps");
         response += `  ${th ? th.fg("dim", "→") : "→"} Use ${th ? th.fg("accent", "plan_project()") : "plan_project()"} to create an implementation plan\n`;
-        response += `  ${th ? th.fg("dim", "→") : "→"} Run ${th ? th.fg("accent", "/go") : "/go"} to execute the fleet\n\n`;
+        response += `  ${th ? th.fg("dim", "→") : "→"} Run ${th ? th.fg("accent", "/go") : "/go"} to execute the fleet\n`;
+        response += `  ${th ? th.fg("dim", "→") : "→"} Read ${th ? th.fg("accent", "ANALYSIS.md") : "ANALYSIS.md"} for detailed findings\n\n`;
       }
 
       // ── Auto-generate PROJECT-DESIGN.md from analysis ──
@@ -2245,9 +2318,6 @@ export default function (pi: ExtensionAPI) {
       const designPath = path.join(ctx.cwd, "PROJECT-DESIGN.md");
       try {
         await fs.promises.writeFile(designPath, designDoc, "utf-8");
-        if (result.success) {
-          response += `${th ? th.fg("accent", "📄") : "📄"} Design document generated: PROJECT-DESIGN.md\n`;
-        }
       } catch {
         // Non-fatal — design doc generation is optional
       }

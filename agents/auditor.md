@@ -41,61 +41,45 @@ Produce your analysis in this structured format:
 ## Project Overview
 [Language, framework, purpose, version]
 
-## Directory Structure
-- src/ — main source code
-  - components/ — UI components
-  - services/ — business logic
-  - utils/ — helper functions
-- tests/ — test files
-- docs/ — documentation
+## Structure
+[Directory layout with purpose of each major directory]
 
 ## Tech Stack
-- Language: TypeScript 5.x
-- Framework: React 18 / Next.js 14
-- Build: Vite
-- Package Manager: pnpm
-- Testing: Vitest + Playwright
+- Languages: [language@version]
+- Frameworks: [framework@version]
+- Build Tools: [tool@version]
+- Package Manager: [npm/pnpm/yarn/etc.]
 
 ## Architecture
-[MVC, component-based, layered, etc.]
+[Detailed description of architectural patterns, module organization, data flow, layer boundaries]
 
 ## Entry Points
-- src/main.tsx — App entry
-- src/routes/index.ts — Route definitions
+- [file path] — [purpose/role]
 
 ## Dependencies
 ### Production
-- react, next, typescript, tailwindcss
-- [list key dependencies with versions]
-
+- [package@version] — [purpose]
 ### Development
-- vitest, playwright, eslint, prettier
+- [package@version] — [purpose]
 
 ## Test Coverage
-- Framework: Vitest (unit), Playwright (E2E)
-- Coverage: ~60% (estimated)
-- Gaps: API routes, edge cases, error handling
-- Files: src/tests/**/*.test.ts
-
-## Configuration
-- tsconfig.json — TypeScript config
-- vite.config.ts — Build config
-- docker-compose.yml — Dev environment
-- .env.example — Environment variables
+- Framework: [name]
+- Coverage estimate: [%]
+- Key test files: [paths]
+- Gaps: [what's missing]
 
 ## Technical Debt
-- [ ] Outdated dependency: lodash@4.x (use built-in alternatives)
-- [ ] Missing test coverage in api/routes/
-- [ ] Inconsistent error handling across services
-- [ ] No CI/CD pipeline configured
+- [Issue] → [file/path:line] — [impact]
+
+## Security Findings
+- [Issue] → [file/path] — [risk level]
 
 ## Recommendations
-1. Update dependencies to latest stable versions
-2. Add test coverage for API routes
-3. Implement centralized error handling
-4. Set up CI/CD with GitHub Actions
-5. Document API surface with OpenAPI spec
+1. [Priority] Action — why + which files
 ```
+
+## IMPORTANT: File Output
+You MUST save your complete analysis report to the file "ANALYSIS.md" in the project root using the write tool.
 
 ## Guidelines
 
