@@ -31,9 +31,985 @@ import {
   matchesKey,
 } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { ZFS } from "./zellij-fleet.ts";
 
-// ============================================================================
+// ===========================================================================
+// ═══════════════════════════════════════════════════════════════════════════
+// INLINE: ZFS Status Bar (from zfs_status_bar.ts)
+// ===========================================================================
+
+/** Status icon for an agent. */
+type AgentStatusIcon = "▸" | "●" | "◉" | "✗" | "○";
+
+interface StatusAgentEntry {
+  name: string;
+  icon: AgentStatusIcon;
+  color: string;
+  task: string;
+  tokens: string;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  turns: number;
+}
+
+interface StatusBarFleetSnapshot {
+  zfsActive: boolean;
+  zfsSessionActive: boolean;
+  fleetName: string;
+  currentPhaseIndex: number;
+  totalPhases: number;
+  currentPhaseName: string;
+  currentPhaseStatus: string;
+  completedTasks: number;
+  totalTasks: number;
+  progress: number;
+  elapsed: string;
+  agents: StatusAgentEntry[];
+  allAgents: StatusAgentEntry[];
+  reviewIterations: number;
+  totalFleetTokens: number;
+  totalAgentInputTokens: number;
+  totalAgentOutputTokens: number;
+  mainAgentActivity?: { status: string; action: string; detail: string; timestamp: number } | null;
+  paused: boolean;
+  lastAction?: string;
+  lastActionAgo?: string;
+  platform?: "windows" | "linux" | "macos" | "unix";
+  platformShell?: string;
+}
+
+const BAR_WIDTH = 80;
+const BAR_H = 10;
+const BORDER_V = "║";
+const BORDER_TL = "╔";
+const BORDER_TR = "╗";
+const BORDER_BL = "╚";
+const BORDER_BR = "╝";
+const BORDER_H = "═";
+
+function formatTokenCount(count: number): string {
+  if (count < 1000) return String(count);
+  if (count < 10000) return `${(count / 1000).toFixed(1)}k`;
+  return `${Math.round(count / 1000)}k`;
+}
+
+function progressBar(filled: number, total: number, width: number): string {
+  const ratio = total > 0 ? filled / total : 0;
+  const bars = Math.round(ratio * width);
+  return "█".repeat(Math.max(0, bars)) + "░".repeat(Math.max(0, width - bars));
+}
+
+function centerPad(text: string, width: number): string {
+  const left = Math.floor((width - text.length) / 2);
+  return " ".repeat(Math.max(0, left)) + text;
+}
+
+function escape(s: string): string {
+  return s.replace(/[<>]/g, "");
+}
+
+function buildAgentGrid(snap: StatusBarFleetSnapshot): string {
+  if (snap.zfsActive) {
+    const sessionIcon = snap.zfsSessionActive ? "✓" : "○";
+    const sessionLabel = "ZFS";
+    return centerPad(`${sessionIcon} ${sessionLabel}  │  ${snap.agents.length} agents  │  Fleet active`, BAR_WIDTH);
+  }
+  if (snap.agents.length === 0) {
+    return centerPad("● 0 agents  │  Fleet idle", BAR_WIDTH);
+  }
+  const agents = snap.agents;
+  const parts: string[] = [];
+  for (let i = 0; i < agents.length; i++) {
+    const a = agents[i];
+    const statusText = `${a.icon} ${a.name.slice(0, 8).padEnd(8)}`;
+    parts.push(statusText);
+  }
+  const result = parts.join("  │  ");
+  if (result.length > BAR_WIDTH - 4) return result.slice(0, BAR_WIDTH - 4) + "…";
+  return "  " + result;
+}
+
+function buildAgentDetails(snap: StatusBarFleetSnapshot): string {
+  const active = snap.agents.filter(a => a.task !== "");
+  if (active.length === 0) {
+    if (snap.mainAgentActivity && snap.mainAgentActivity.action !== "idle") {
+      const ma = snap.mainAgentActivity;
+      const icon = ma.status === "executing" ? "▸" : "◇";
+      return `  ${icon} ${ma.action} → ${escape(ma.detail).slice(0, 50)}`;
+    }
+    if (snap.lastAction) {
+      const ago = snap.lastActionAgo || "";
+      return `  ● last: ${escape(snap.lastAction)}${ago ? ` (${ago})` : ""}`;
+    }
+    return "  ● idle — waiting for work";
+  }
+  const lines: string[] = [];
+  const show = active.slice(0, 3);
+  for (const a of show) {
+    const icon = a.icon;
+    const name = a.name.slice(0, 10).padEnd(10);
+    const task = escape(a.task).slice(0, 30);
+    const model = a.model ? `[${a.model.slice(0, 12)}]` : "[?]";
+    const tokens = a.task ? `│ ${a.tokens}` : "";
+    lines.push(`  ${icon} ${name}  ${model}  ${task}${tokens}`);
+  }
+  return lines.join("\n");
+}
+
+function buildPhaseInfo(snap: StatusBarFleetSnapshot): string {
+  if (snap.paused) {
+    return centerPad(`⏸ PAUSED  │  P${snap.currentPhaseIndex + 1}/${snap.totalPhases}`, BAR_WIDTH);
+  }
+  const phaseLabel = snap.currentPhaseName
+    ? `P${snap.currentPhaseIndex + 1}/${snap.totalPhases}: ${snap.currentPhaseName}`
+    : "No active phase";
+  const pBar = snap.totalTasks > 0
+    ? `[${progressBar(snap.completedTasks, snap.totalTasks, 15)} ${snap.progress}%]`
+    : "[░░░░░░░░░░░░░░░ 0%]";
+  const statusIcon = snap.currentPhaseStatus === "complete" ? "✓" :
+    snap.currentPhaseStatus === "failed" ? "✗" :
+    snap.currentPhaseStatus === "reviewing" ? "◉" :
+    snap.currentPhaseStatus === "running" ? "▸" : "○";
+  return `${phaseLabel}  ${pBar}  ${snap.completedTasks}/${snap.totalTasks} tasks  ${snap.elapsed}  ${statusIcon}`;
+}
+
+function buildFooter(snap: StatusBarFleetSnapshot): string {
+  const tokenStr = `▸ ${formatTokenCount(snap.totalAgentInputTokens)}i / ${formatTokenCount(snap.totalAgentOutputTokens)}o | fleet: ${formatTokenCount(snap.totalFleetTokens)} tokens`;
+  const reviewStr = snap.reviewIterations > 0 ? `#${snap.reviewIterations}` : "";
+  const reviewLabel = reviewStr ? `reviews${reviewStr}` : "0 reviews";
+  const parts: string[] = [
+    reviewLabel,
+    `Elapsed: ${snap.elapsed}`,
+    snap.zfsActive ? "ZFS" : "pi",
+  ];
+  if (snap.platform) parts.push(snap.platform);
+  const content = parts.join("  │  ");
+  return content;
+}
+
+export function renderStatusBar(snap: StatusBarFleetSnapshot): string {
+  const agentsGrid = buildAgentGrid(snap);
+  const phaseInfo = buildPhaseInfo(snap);
+  const agentDetails = buildAgentDetails(snap);
+  const footer = buildFooter(snap);
+  const header = `${snap.fleetName}  ${snap.zfsActive ? "[ZFS MODE]" : "[pi MODE]"}  │  ${snap.currentPhaseIndex + 1}/${snap.totalPhases}`;
+  const lines: string[] = [
+    `${BORDER_TL}${BORDER_H.repeat(BAR_WIDTH)}${BORDER_TR}`,
+    `${BORDER_V}${centerPad(header, BAR_WIDTH)}${BORDER_V}`,
+    `${BORDER_V}${agentsGrid}${BORDER_V}`,
+    `${BORDER_V}${phaseInfo}${BORDER_V}`,
+    `${BORDER_V}${agentDetails}${BORDER_V}`,
+  ];
+  const usedLines = lines.length;
+  for (let i = usedLines; i < BAR_H - 1; i++) {
+    lines.push(`${BORDER_V}${" ".repeat(BAR_WIDTH)}${BORDER_V}`);
+  }
+  lines.push(`${BORDER_V}${footer}${BORDER_V}`);
+  lines.push(`${BORDER_BL}${BORDER_H.repeat(BAR_WIDTH)}${BORDER_BR}`);
+  return lines.join("\n");
+}
+
+export function renderCompactStatusBar(snap: StatusBarFleetSnapshot): string {
+  const agentsGrid = buildAgentGrid(snap);
+  const phaseInfo = buildPhaseInfo(snap);
+  const tokenLine = `▸ ${formatTokenCount(snap.totalAgentInputTokens)}i / ${formatTokenCount(snap.totalAgentOutputTokens)}o  │  fleet: ${formatTokenCount(snap.totalFleetTokens)} tokens  │  ${snap.reviewIterations} reviews`;
+  const elapsedLine = `Elapsed: ${snap.elapsed}`;
+  const modeLine = snap.zfsActive ? "[ZFS]" : "[pi]";
+  const header = `${snap.fleetName}  ${modeLine}  │  P${snap.currentPhaseIndex + 1}/${snap.totalPhases}`;
+  return [
+    `${BORDER_TL}${BORDER_H.repeat(BAR_WIDTH)}${BORDER_TR}`,
+    `${BORDER_V}${centerPad(header, BAR_WIDTH)}${BORDER_V}`,
+    `${BORDER_V}${agentsGrid}${BORDER_V}`,
+    `${BORDER_V}${phaseInfo}${BORDER_V}`,
+    `${BORDER_V}${tokenLine}${BORDER_V}`,
+    `${BORDER_V}${elapsedLine}${BORDER_V}`,
+    `${BORDER_BL}${BORDER_H.repeat(BAR_WIDTH)}${BORDER_BR}`,
+  ].join("\n");
+}
+
+export function buildFleetSnapshot(opts: {
+  phases: Array<{ id: string; name: string; status: string; tasks: Array<{ id: string; agentName: string; status: string; description?: string; tokensUsed?: number; inputTokens?: number; outputTokens?: number; messageCount?: number; codeReviewStatus?: string; designReviewStatus?: string }> }>;
+  currentPhaseIndex: number;
+  activeAgents: Array<{ name: string; status: string; currentTask?: string; model?: string; tokensUsed?: number; inputTokens?: number; outputTokens?: number; turns?: number }>;
+  paused: boolean;
+  startTime: number;
+  reviewIterations: number;
+  totalFleetTokens: number;
+  mainAgentActivity?: { status: string; action: string; detail: string; timestamp: number } | null;
+  zfsActive: boolean;
+  zfsSessionActive: boolean;
+  lastAction?: string;
+  lastActionAgo?: string;
+}): StatusBarFleetSnapshot {
+  const now = Date.now();
+  const elapsed = formatDuration(now - opts.startTime);
+  const totalTasks = opts.phases.reduce((s, p) => s + p.tasks.length, 0);
+  const completedTasks = opts.phases.reduce((s, p) => s + p.tasks.filter((t) => t.status === "complete" || t.status === "needs_fix").length, 0);
+  const progress = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
+  const currentPhase = opts.phases[opts.currentPhaseIndex];
+  const currentPhaseName = currentPhase?.name || "";
+  const currentPhaseStatus = currentPhase?.status || "pending";
+  const allAgentNames = new Set<string>();
+  for (const phase of opts.phases) {
+    for (const task of phase.tasks) allAgentNames.add(task.agentName);
+  }
+  for (const agent of opts.activeAgents) allAgentNames.add(agent.name);
+  const activeAgentEntries: StatusAgentEntry[] = [];
+  const allAgentEntries: StatusAgentEntry[] = [];
+  for (const agent of opts.activeAgents) {
+    const icon = agent.status === "running" ? "▸" :
+      agent.status === "reviewing" ? "◉" : agent.status === "error" ? "✗" :
+      agent.status === "idle" ? "●" : "○";
+    const color = agent.status === "running" ? "accent" :
+      agent.status === "error" ? "error" : agent.status === "reviewing" ? "accent" : "dim";
+    activeAgentEntries.push({
+      name: agent.name, icon: icon as AgentStatusIcon, color, task: agent.currentTask || "",
+      tokens: agent.tokensUsed != null ? formatTokenCount(agent.tokensUsed) : "",
+      model: agent.model || "", inputTokens: agent.inputTokens || 0,
+      outputTokens: agent.outputTokens || 0, turns: agent.turns || 0,
+    });
+    allAgentEntries.push(activeAgentEntries[activeAgentEntries.length - 1]);
+  }
+  const knownNames = new Set(opts.activeAgents.map((a) => a.name));
+  for (const name of allAgentNames) {
+    if (!knownNames.has(name)) {
+      allAgentEntries.push({ name, icon: "○", color: "muted", task: "", tokens: "", model: "", inputTokens: 0, outputTokens: 0, turns: 0 });
+    }
+  }
+  const totalInputTokens = opts.activeAgents.reduce((s, a) => s + (a.inputTokens || 0), 0);
+  const totalOutputTokens = opts.activeAgents.reduce((s, a) => s + (a.outputTokens || 0), 0);
+  return {
+    zfsActive: opts.zfsActive, zfsSessionActive: opts.zfsSessionActive, fleetName: "CARAVEL FLEET",
+    currentPhaseIndex: opts.currentPhaseIndex, totalPhases: opts.phases.length, currentPhaseName,
+    currentPhaseStatus, completedTasks, totalTasks, progress, elapsed,
+    agents: activeAgentEntries, allAgents: allAgentEntries, reviewIterations: opts.reviewIterations,
+    totalFleetTokens: opts.totalFleetTokens, totalAgentInputTokens: totalInputTokens,
+    totalAgentOutputTokens: totalOutputTokens, mainAgentActivity: opts.mainAgentActivity, paused: opts.paused,
+    lastAction: opts.lastAction, lastActionAgo: opts.lastActionAgo,
+  };
+}
+
+// ===========================================================================
+// INLINE: ZFS Process Manager (from zellij-fleet.ts)
+// ===========================================================================
+
+const FLEET_SESSION = "caravel";
+const FLEET_LAYOUT_FILE = "zellij-layout.kdl";
+const DEFAULT_PANE_WIDTH = 30;
+const DEFAULT_PANE_HEIGHT = 20;
+const PANE_ID_PREFIX = "caravel-pid-";
+
+interface PlatformInfo {
+  platform: "windows" | "linux" | "macos" | "unix";
+  shell: "cmd" | "powershell" | "bash" | "zsh" | "fish" | "sh";
+  shellArg: string;
+  shellFlag: string;
+  isWindows: boolean;
+}
+
+function detectPlatform(): PlatformInfo {
+  const platform = os.platform();
+  const isWindows = platform === "win32";
+  let shell: PlatformInfo["shell"] = "bash";
+  if (isWindows) {
+    const ps = process.env["WSL_DISTRO_NAME"];
+    if (ps) { shell = "bash"; }
+    else {
+      const pwsh = process.env["PROMPT_COMMAND"] ?? process.env["COMSPEC"] ?? "";
+      if (/powershell/i.test(pwsh)) shell = "powershell";
+      else if (/cmd/i.test(pwsh) || process.env["COMSPEC"]) shell = "cmd";
+      else shell = "powershell";
+    }
+  } else {
+    const sh = process.env["SHELL"] ?? "";
+    if (sh.includes("zsh")) shell = "zsh";
+    else if (sh.includes("fish")) shell = "fish";
+    else if (sh.includes("bash")) shell = "bash";
+    else shell = "sh";
+  }
+  const shellMap: Record<string, { flag: string; arg: string }> = {
+    bash: { flag: "-c", arg: "bash" }, zsh: { flag: "-c", arg: "zsh" },
+    fish: { flag: "-c", arg: "fish" }, sh: { flag: "-c", arg: "sh" },
+    cmd: { flag: "/c", arg: "cmd" }, powershell: { flag: "-NoProfile", arg: "powershell" },
+  };
+  const config = shellMap[shell] ?? shellMap["bash"];
+  return { platform: isWindows ? "windows" : (platform as "linux" | "macos" | "unix"), shell, shellArg: config.arg, shellFlag: config.flag, isWindows };
+}
+
+function checkCommand(cmd: string): boolean {
+  try {
+    if (os.platform() === "win32") {
+      const proc = spawn("where", [cmd], { stdio: "ignore", shell: true });
+      return (false as boolean); // async check below
+    } else {
+      const proc = spawn("which", [cmd], { stdio: "ignore", shell: true });
+      return (false as boolean); // async check below
+    }
+  } catch { return false; }
+}
+
+async function checkCommandAsync(cmd: string): Promise<boolean> {
+  try {
+    if (os.platform() === "win32") {
+      return new Promise<boolean>((resolve) => {
+        const proc = spawn("where", [cmd], { stdio: "ignore", shell: true });
+        proc.on("exit", (code) => resolve(code === 0));
+        setTimeout(() => resolve(false), 3000);
+      });
+    } else {
+      return new Promise<boolean>((resolve) => {
+        const proc = spawn("which", [cmd], { stdio: "ignore", shell: true });
+        proc.on("exit", (code) => resolve(code === 0));
+        setTimeout(() => resolve(false), 3000);
+      });
+    }
+  } catch { return false; }
+}
+
+interface ZFSPaneState {
+  paneId: string; name: string; agent?: string; command: string; cwd?: string;
+  running: boolean; exited: boolean; exitCode: number | null;
+  stdoutBuffer: string; stderrBuffer: string; partialLine: string;
+  stdoutCallback: ((chunk: string) => void) | null; stderrCallback: ((chunk: string) => void) | null;
+  process?: any; abortController?: AbortController;
+  startTime?: number; endTime?: number; pid?: number;
+}
+
+interface ZFSLayoutConfig {
+  name: string; windowWidth: number; rightWidth: number;
+  panes: Array<{ name: string; type?: string; align?: string; focus?: boolean; command?: string; args?: string[] }>;
+}
+
+interface ZFSProcessState {
+  running: boolean; exited: boolean; exitCode: number | null;
+  stdout: string; stderr: string; pid?: number; startTime: number; endTime?: number;
+  abortController?: AbortController;
+}
+
+interface CommandResult {
+  cmd: string; args: string[]; platform: PlatformInfo;
+}
+
+function loadFleetLayout(projectRoot: string): ZFSLayoutConfig | null {
+  const kdlPath = path.join(projectRoot, FLEET_LAYOUT_FILE);
+  if (!fs.existsSync(kdlPath)) return null;
+  const content = fs.readFileSync(kdlPath, "utf-8");
+  return parseKDLLayout(content);
+}
+
+function parseKDLLayout(content: string): ZFSLayoutConfig | null {
+  const result: ZFSLayoutConfig = { name: "fleet", windowWidth: 60, rightWidth: 40, panes: [] };
+  const nameMatch = content.match(/layout\s*\{\s*name:\s*"([^"]+)"/);
+  if (nameMatch) result.name = nameMatch[1];
+  const windowMatch = content.match(/window\s*\{([^}]+(?:\{[^}]*\}[^}]*)*)\}/s);
+  if (!windowMatch) return result;
+  const windowBody = windowMatch[1];
+  const paneRegex = /pane\s*\{([^}]+(?:\{[^}]*\}[^}]*)*)\}/gs;
+  let paneMatch;
+  while ((paneMatch = paneRegex.exec(windowBody)) !== null) {
+    const block = paneMatch[1];
+    const pane: ZFSLayoutConfig["panes"][number] = { name: "unnamed" };
+    const nameM = block.match(/name:\s*"([^"]+)"/);
+    if (nameM) pane.name = nameM[1];
+    const typeM = block.match(/type:\s*"(\w+)"/);
+    if (typeM) pane.type = typeM[1];
+    const alignM = block.match(/align:\s*"(\w+)"/);
+    if (alignM) pane.align = alignM[1];
+    const focusM = block.match(/focus:\s*true/);
+    if (focusM) pane.focus = true;
+    const sizeM = block.match(/size:\s*(\d+)/);
+    if (sizeM) {
+      if (pane.align === "left") result.windowWidth = parseInt(sizeM[1]);
+      else result.rightWidth = parseInt(sizeM[1]);
+    }
+    result.panes.push(pane);
+  }
+  return result;
+}
+
+function generateFleetLayout(agents: Array<{ name: string; description: string }>, customWidth?: number): string {
+  const leftWidth = customWidth ?? 60;
+  const rightWidth = 100 - leftWidth;
+  const lines: string[] = [];
+  lines.push("// ════════════════════════════════════════════════════════════");
+  lines.push("// Caravel Fleet — Auto-generated Zellij Layout");
+  lines.push("// ════════════════════════════════════════════════════════════");
+  lines.push("");
+  lines.push("window {");
+  lines.push("");
+  lines.push("    pane {");
+  lines.push("        type: \"main\"");
+  lines.push(`        align: "left"`);
+  lines.push(`        size: ${leftWidth}`);
+  lines.push(`        name: "orchestrator"`);
+  lines.push("        focus: true");
+  lines.push("    }");
+  lines.push("");
+  const agentPanes = agents.slice(0, 5);
+  for (const agent of agentPanes) {
+    lines.push("    pane {");
+    lines.push("        align: \"right\"");
+    lines.push(`        size: ${rightWidth}`);
+    lines.push(`        name: "${agent.name}"`);
+    lines.push("    }");
+    lines.push("");
+  }
+  lines.push("    floating {");
+  lines.push("        name: \"status-bar\"");
+  lines.push('        y: "bottom"');
+  lines.push('        x: "right"');
+  lines.push("        max_width: 80");
+  lines.push("        height: 10");
+  lines.push("    }");
+  lines.push("");
+  lines.push("}");
+  return lines.join("\n");
+}
+
+function buildZellijAction(action: string, args: string[]): CommandResult {
+  const platform = detectPlatform();
+  return { cmd: "zellij", args: [action, ...args], platform };
+}
+
+function buildPaneCommand(cwd: string, taskDescription: string, agentName: string, agentModel?: string): string {
+  const platform = detectPlatform();
+  const escapedDesc = taskDescription.replace(/"/g, '\\"').replace(/\$/g, "\\$");
+  const piArgs = ["--mode", "json", "-p", "--no-session"];
+  if (agentModel) piArgs.push("--model", agentModel);
+  const taskArg = `"${taskDescription}"`;
+  if (platform.shell === "cmd") {
+    return `chcp 65001 >nul & ${process.execPath} ${process.argv[1]} ${piArgs.join(" ")} ${taskArg}`;
+  }
+  if (platform.shell === "powershell") {
+    return `${process.execPath} ${process.argv[1]} ${piArgs.join(" ")} ${taskArg}`;
+  }
+  return `${process.execPath} ${process.argv[1]} ${piArgs.join(" ")} ${taskArg}`;
+}
+
+function killProcessTree(pid?: number): void {
+  if (pid == null) return;
+  if (os.platform() === "win32") {
+    try { spawn("taskkill", ["/F", "/T", "/PID", String(pid)], { stdio: "ignore", shell: true }); } catch { /* ignore */ }
+  } else {
+    try { process.kill(-pid, "SIGTERM"); } catch { try { process.kill(pid, "SIGTERM"); } catch { /* already dead */ } }
+  }
+}
+
+class ZFS {
+  private api: ExtensionAPI | null = null;
+  private platform: PlatformInfo;
+  private zellijAvailable: boolean = false;
+  private cwd: string;
+  private sessionName: string;
+  private layoutConfig: ZFSLayoutConfig | null;
+  private layoutPath: string;
+  private panes: Map<string, ZFSPaneState> = new Map();
+  private activeProcesses: Map<string, ZFSProcessState> = new Map();
+  private paused: boolean = false;
+  private skipAgent: string | null = null;
+  private statusBarManager: ZFSStatusBarManager | null = null;
+  private fleetStateGetter: (() => any) | null = null;
+  private statusBarActive: boolean = false;
+
+  constructor() {
+    this.platform = detectPlatform();
+    this.zellijAvailable = false;
+    this.cwd = process.cwd();
+    this.sessionName = FLEET_SESSION;
+    this.layoutConfig = null;
+    this.layoutPath = path.join(this.cwd, FLEET_LAYOUT_FILE);
+    if (fs.existsSync(this.layoutPath)) {
+      const content = fs.readFileSync(this.layoutPath, "utf-8");
+      this.layoutConfig = parseKDLLayout(content);
+    }
+  }
+
+  async checkAndInitZellij(): Promise<{ available: boolean; message: string }> {
+    this.zellijAvailable = await checkCommandAsync("zellij");
+    if (this.zellijAvailable) return { available: true, message: "Zellij detected — fleet process manager ready." };
+    return { available: false, message: "Zellij not found. Install from https://zellij.dev/tutorials/installation/ or fleet will fall back to background processes." };
+  }
+
+  setCwd(cwd: string): void {
+    this.cwd = cwd;
+    this.layoutPath = path.join(cwd, FLEET_LAYOUT_FILE);
+    if (fs.existsSync(this.layoutPath)) {
+      const content = fs.readFileSync(this.layoutPath, "utf-8");
+      this.layoutConfig = parseKDLLayout(content);
+    }
+  }
+
+  getLayoutConfig(): ZFSLayoutConfig | null { return this.layoutConfig; }
+
+  async createSession(agents: Array<{ name: string; description: string }>, cwd?: string): Promise<{ success: boolean; message: string }> {
+    if (!this.zellijAvailable) return { success: false, message: "Zellij is not installed. Cannot create session." };
+    let kdlContent: string;
+    if (this.layoutConfig) kdlContent = this.generateKDLFromConfig(agents);
+    else kdlContent = generateFleetLayout(agents);
+    const tmpLayout = path.join(os.tmpdir(), `caravel-fleet-${Date.now()}.kdl`);
+    try { fs.writeFileSync(tmpLayout, kdlContent, "utf-8"); } catch { return { success: false, message: "Failed to write layout file." }; }
+    await this.killSession(this.sessionName);
+    const cmd = `zellij session create -s ${this.sessionName} --layout "${tmpLayout}"`;
+    return new Promise((resolve) => {
+      const proc = spawn(this.platform.shell, [this.platform.shellArg, cmd], { cwd: cwd ?? this.cwd, shell: true, stdio: ["ignore", "pipe", "pipe"] });
+      let stdout = "", stderr = "";
+      proc.stdout.on("data", (d: any) => { stdout += d.toString(); });
+      proc.stderr.on("data", (d: any) => { stderr += d.toString(); });
+      proc.on("close", (code: number) => {
+        try { fs.unlinkSync(tmpLayout); } catch { /* ignore */ }
+        if (code === 0) { this.initStatusBar(); resolve({ success: true, message: `Zellij session "${this.sessionName}" created. Layout: ${kdlContent.includes("floating") ? "with status bar" : "without status bar"}` }); }
+        else resolve({ success: false, message: `Failed to create session (exit ${code}): ${stderr.slice(0, 200)}` });
+      });
+      proc.on("error", () => {
+        try { fs.unlinkSync(tmpLayout); } catch { /* ignore */ }
+        this.destroyStatusBar();
+        resolve({ success: false, message: "Failed to spawn zellij." });
+      });
+    });
+  }
+
+  private generateKDLFromConfig(agents: Array<{ name: string; description: string }>): string {
+    if (!this.layoutConfig) return generateFleetLayout(agents);
+    const lines: string[] = [];
+    const cfg = this.layoutConfig;
+    lines.push("// Caravel Fleet — Auto-generated from layout config");
+    lines.push("window {");
+    lines.push("");
+    for (const pane of cfg.panes) {
+      lines.push("    pane {");
+      if (pane.type) lines.push(`        type: "${pane.type}"`);
+      if (pane.align) lines.push(`        align: "${pane.align}"`);
+      if (pane.focus) lines.push("        focus: true");
+      lines.push(`        name: "${pane.name}"`);
+      lines.push("    }");
+      lines.push("");
+    }
+    lines.push("}");
+    return lines.join("\n");
+  }
+
+  async killSession(sessionName: string): Promise<boolean> {
+    if (!this.zellijAvailable) return false;
+    return new Promise<boolean>((resolve) => {
+      const proc = spawn("zellij", ["kill-session", sessionName], { shell: true, stdio: "ignore" });
+      proc.on("close", (code: number) => resolve(code === 0 || code === null));
+      proc.on("error", () => resolve(false));
+      setTimeout(() => resolve(false), 3000);
+    });
+  }
+
+  async switchToSession(): Promise<boolean> {
+    if (!this.zellijAvailable) return false;
+    return new Promise<boolean>((resolve) => {
+      const proc = spawn("zellij", ["switch-to-session", this.sessionName], { shell: true, stdio: "ignore" });
+      proc.on("close", (code: number) => resolve(code === 0 || code === null));
+      proc.on("error", () => resolve(false));
+      setTimeout(() => resolve(false), 3000);
+    });
+  }
+
+  async detachSession(): Promise<boolean> {
+    if (!this.zellijAvailable) return false;
+    return new Promise<boolean>((resolve) => {
+      const proc = spawn("zellij", ["detach"], { shell: true, stdio: "ignore" });
+      proc.on("close", (code: number) => resolve(code === 0 || code === null));
+      proc.on("error", () => resolve(false));
+      setTimeout(() => resolve(false), 3000);
+    });
+  }
+
+  async spawnPane(agentName: string, taskDescription: string, agentModel?: string, cwd?: string, onStdout?: (chunk: string, agentName: string) => void, onStderr?: (chunk: string, agentName: string) => void): Promise<{ success: boolean; paneId: string; message?: string }> {
+    if (!this.zellijAvailable) return this.spawnBackgroundProcess(agentName, taskDescription, agentModel, cwd, onStdout, onStderr);
+    const paneId = `${PANE_ID_PREFIX}${agentName}-${Date.now()}`;
+    const paneCwd = (cwd ?? this.cwd) as string;
+    const pane: ZFSPaneState = {
+      paneId, name: agentName, agent: agentName,
+      command: buildPaneCommand(paneCwd, taskDescription, agentName, agentModel ?? ""),
+      cwd: paneCwd, running: true, exited: false, exitCode: null,
+      stdoutBuffer: "", stderrBuffer: "", partialLine: "",
+      stdoutCallback: onStdout ? (chunk: string) => onStdout(chunk, agentName) : null,
+      stderrCallback: onStderr ? (chunk: string) => onStderr(chunk, agentName) : null,
+      startTime: Date.now(),
+    };
+    this.panes.set(paneId, pane);
+    const result = await this.sendZellijAction("action", ["new-pane", "-s", this.sessionName, "-n", agentName, "-d", "floating"]);
+    if (!result) { pane.running = false; pane.exited = true; this.panes.delete(paneId); return { success: false, paneId, message: `Failed to create pane in session "${this.sessionName}".` }; }
+    return { success: true, paneId };
+  }
+
+  private async spawnBackgroundProcess(agentName: string, taskDescription: string, agentModel?: string, cwd?: string, onStdout?: (chunk: string, agentName: string) => void, onStderr?: (chunk: string, agentName: string) => void): Promise<{ success: boolean; paneId: string }> {
+    const paneId = `${PANE_ID_PREFIX}${agentName}-bg-${Date.now()}`;
+    const processCommand = buildPaneCommand(cwd ?? this.cwd, taskDescription, agentName, agentModel ?? "");
+    const state: ZFSProcessState = { running: true, exited: false, exitCode: null, stdout: "", stderr: "", startTime: Date.now() };
+    this.activeProcesses.set(paneId, state);
+    const args = this.platform.shell === "cmd" ? ["/c", processCommand] : [this.platform.shellArg, processCommand];
+    spawn(this.platform.shell, args, { cwd: cwd ?? this.cwd, shell: true, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, CARRAVEL_FLEET: "true", CARRAVEL_PANE_ID: paneId, TERM: "xterm-256color" } })
+      .on("close", (code: number) => { state.exited = true; state.exitCode = code; state.running = false; state.endTime = Date.now(); this.activeProcesses.delete(paneId); })
+      .on("error", () => { state.exited = true; state.running = false; this.activeProcesses.delete(paneId); });
+    return { success: true, paneId };
+  }
+
+  private async sendZellijAction(action: string, extraArgs: string[] = []): Promise<boolean> {
+    if (!this.zellijAvailable) return false;
+    return new Promise<boolean>((resolve) => {
+      const proc = spawn("zellij", [action, ...extraArgs], { shell: true, stdio: ["ignore", "pipe", "pipe"] });
+      let stderr = "";
+      proc.stderr.on("data", (d: any) => { stderr += d.toString(); });
+      proc.on("close", (code: number) => { resolve(code === 0 || code === null); });
+      proc.on("error", () => { resolve(false); });
+      setTimeout(() => { resolve(false); }, 5000);
+    });
+  }
+
+  async stopPane(paneId: string): Promise<boolean> {
+    const pane = this.panes.get(paneId);
+    if (pane) {
+      if (pane.process) { try { killProcessTree(pane.process.pid); } catch { /* ignore */ } }
+      pane.running = false; pane.exited = true; pane.endTime = Date.now();
+      this.panes.delete(paneId);
+    }
+    const proc = this.activeProcesses.get(paneId);
+    if (proc) { proc.abortController?.abort(); if (proc.pid) killProcessTree(proc.pid); proc.exited = true; this.activeProcesses.delete(paneId); }
+    return this.sendZellijAction("action", ["close-pane", "-s", this.sessionName]);
+  }
+
+  followPane(paneId: string, onOutput: (chunk: string, paneName: string) => void): boolean {
+    const pane = this.panes.get(paneId);
+    if (!pane || !pane.running) return false;
+    pane.stdoutCallback = (chunk: string) => { onOutput(chunk, pane.name); };
+    return true;
+  }
+
+  unfollowPane(paneId: string): boolean {
+    const pane = this.panes.get(paneId);
+    if (!pane) return false;
+    pane.stdoutCallback = null; return true;
+  }
+
+  async resizePane(paneId: string, width: number, height: number): Promise<boolean> {
+    if (!this.zellijAvailable) return false;
+    return this.sendZellijAction("action", ["resize", "increase", "-s", this.sessionName, "-n", paneId]);
+  }
+
+  getPaneStatus(paneId: string): ZFSPaneState | null { return this.panes.get(paneId) ?? null; }
+
+  listPanes(): Array<{ paneId: string; name: string; agent?: string; running: boolean; exited: boolean; exitCode: number | null }> {
+    return Array.from(this.panes.values()).map((p) => ({ paneId: p.paneId, name: p.name, agent: p.agent, running: p.running, exited: p.exited, exitCode: p.exitCode }));
+  }
+
+  setFleetStateGetter(getter: () => any): void { this.fleetStateGetter = getter; }
+
+  getPlatformInfo(): PlatformInfo { return this.platform; }
+
+  initStatusBar(): void {
+    if (!this.zellijAvailable || this.statusBarManager) return;
+    const floatingPaneName = "status-bar";
+    const sessionName = this.sessionName;
+    const cwd = this.cwd;
+    this.statusBarManager = new ZFSStatusBarManager({
+      floatingPaneName, sessionName, cwd,
+      getFleetState: () => {
+        if (!this.fleetStateGetter) return null;
+        const fleetState = this.fleetStateGetter();
+        if (!fleetState) return null;
+        const fsState = fleetState as any;
+        const now = Date.now();
+        const lastAction = (fsState.mainAgentActivity && fsState.mainAgentActivity.action !== "idle") ? fsState.mainAgentActivity.action : "idle";
+        let lastActionAgo = "";
+        if (fsState.mainAgentActivity && fsState.mainAgentActivity.timestamp) {
+          const age = now - fsState.mainAgentActivity.timestamp;
+          const secs = Math.floor(age / 1000);
+          const mins = Math.floor(secs / 60);
+          lastActionAgo = mins > 0 ? `${mins}m ago` : `${secs}s ago`;
+        }
+        return buildFleetSnapshot({
+          phases: fsState.phases, currentPhaseIndex: fsState.currentPhaseIndex,
+          activeAgents: fsState.activeAgents, paused: fsState.paused,
+          startTime: fsState.startTime || now, reviewIterations: fsState.reviewIterations,
+          totalFleetTokens: fsState.totalFleetTokens, mainAgentActivity: fsState.mainAgentActivity,
+          zfsActive: true, zfsSessionActive: this.zellijAvailable,
+          lastAction, lastActionAgo,
+        });
+      },
+      getPlatformInfo: () => ({ shell: this.platform.shell, isWindows: this.platform.isWindows, platform: this.platform.platform }),
+    });
+    this.statusBarActive = true;
+  }
+
+  destroyStatusBar(): void {
+    if (this.statusBarManager) { this.statusBarManager.stop(); this.statusBarManager = null; }
+    this.statusBarActive = false;
+  }
+
+  refreshStatusBar(): void {
+    if (this.statusBarManager && this.statusBarActive) { this.statusBarManager.update(); }
+  }
+
+  getStatusBarInfo(): { active: boolean; available: boolean; session: string; pane: string } {
+    return { active: this.statusBarActive && this.zellijAvailable, available: this.zellijAvailable, session: this.sessionName, pane: "status-bar" };
+  }
+
+  async pauseAll(): Promise<boolean> {
+    this.paused = true;
+    for (const [, pane] of this.panes) {
+      if (pane.process && pane.running) {
+        try {
+          if (os.platform() === "win32") {
+            spawn("wmic", ["process", "where", `processid=${pane.process.pid}`, "call", "suspend"], { stdio: "ignore", shell: true });
+          } else { process.kill(pane.process.pid, "SIGSTOP"); }
+        } catch { /* ignore */ }
+      }
+    }
+    for (const [, proc] of this.activeProcesses) { proc.abortController?.abort(); }
+    return true;
+  }
+
+  async resumeAll(): Promise<boolean> {
+    this.paused = false; this.skipAgent = null;
+    for (const [, pane] of this.panes) {
+      if (pane.process && !pane.running) {
+        try { process.kill(pane.process.pid, "SIGCONT"); } catch { pane.exited = true; }
+      }
+    }
+    return true;
+  }
+
+  skipPane(agentName: string): boolean {
+    this.skipAgent = agentName;
+    for (const [paneId, pane] of this.panes) {
+      if (pane.agent === agentName && pane.running) {
+        pane.exited = true; pane.running = false; pane.endTime = Date.now();
+        if (pane.process) { killProcessTree(pane.process.pid); }
+      }
+    }
+    for (const [paneId, proc] of this.activeProcesses) {
+      if (paneId.includes(agentName)) { proc.abortController?.abort(); if (proc.pid) killProcessTree(proc.pid); }
+    }
+    return true;
+  }
+
+  async sendSignalToPane(paneId: string, signal: "SIGTERM" | "SIGKILL" | "SIGINT" | "SIGSTOP" | "SIGCONT"): Promise<boolean> {
+    const pane = this.panes.get(paneId);
+    if (!pane) return false;
+    if (pane.process && pane.running) {
+      try { process.kill(pane.process.pid, signal); } catch { return false; }
+    }
+    return this.sendZellijAction("action", ["send-key", "-s", this.sessionName, "-n", pane.name, signal]);
+  }
+
+  getFleetState(): { zellijAvailable: boolean; paused: boolean; sessionName: string; activePanes: number; exitedPanes: number; activeProcesses: number; platform: PlatformInfo } {
+    return {
+      zellijAvailable: this.zellijAvailable, paused: this.paused, sessionName: this.sessionName,
+      activePanes: Array.from(this.panes.values()).filter((p) => p.running).length,
+      exitedPanes: Array.from(this.panes.values()).filter((p) => p.exited).length,
+      activeProcesses: this.activeProcesses.size, platform: this.platform,
+    };
+  }
+
+  async cleanup(): Promise<void> {
+    for (const paneId of Array.from(this.panes.keys())) {
+      const pane = this.panes.get(paneId);
+      if (pane && pane.running) {
+        if (pane.process) { try { killProcessTree(pane.process.pid); } catch { /* ignore */ } }
+        pane.running = false; pane.exited = true; pane.endTime = Date.now();
+      }
+    }
+    this.panes.clear();
+    for (const [, proc] of this.activeProcesses) {
+      proc.abortController?.abort();
+      if (proc.pid) killProcessTree(proc.pid);
+    }
+    this.activeProcesses.clear();
+    await this.killSession(this.sessionName);
+    this.destroyStatusBar();
+  }
+
+  registerExtension(pi: ExtensionAPI): void { this.api = pi; }
+
+  registerHook(pi: ExtensionAPI): void {
+    const self = this;
+    pi.on("session_start", async (_event: any, ctx: any) => {
+      self.setCwd(ctx.cwd);
+      const init = await self.checkAndInitZellij();
+      if (init.available) { ctx.ui.notify("ZFS: Zellij detected — fleet process manager ready", "info"); self.initStatusBar(); }
+      else { ctx.ui.notify(`ZFS: ${init.message}`, "warning"); }
+    });
+    pi.on("session_shutdown", async () => { await self.cleanup(); });
+
+    const registerTool = pi.registerTool.bind(pi);
+
+    registerTool({
+      name: "zfs_create_session", label: "ZFS Create Session",
+      description: "Create a Zellij session with the fleet layout for sub-agent execution.",
+      parameters: Type.Object({ agents: Type.Array(Type.Object({ name: Type.String({ description: "Agent name" }), description: Type.String({ description: "Agent description" }) })) }),
+      execute: async (_toolCallId: string, params: any, _signal: any, onUpdate: any, ctx: any) => {
+        self.setCwd(ctx.cwd);
+        const result = await self.createSession(params.agents);
+        onUpdate?.({ content: [{ type: "text", text: result.message }] });
+        return { content: [{ type: "text", text: result.message }], details: { success: result.success } };
+      },
+      promptSnippet: "Create a ZFS fleet session with the given agents",
+    });
+
+    registerTool({
+      name: "zfs_spawn_pane", label: "ZFS Spawn Pane",
+      description: "Spawn a sub-agent task in a dedicated Zellij pane with real-time stdout streaming.",
+      parameters: Type.Object({ agentName: Type.String({ description: "Agent name for the pane" }), taskDescription: Type.String({ description: "Task to execute" }), agentModel: Type.Optional(Type.String({ description: "Model to use" })), cwd: Type.Optional(Type.String({ description: "Working directory" })) }),
+      execute: async (_toolCallId: string, params: any, _signal: any, onUpdate: any, ctx: any) => {
+        self.setCwd(ctx.cwd);
+        const result = await self.spawnPane(params.agentName, params.taskDescription, params.agentModel, params.cwd, (chunk: string, aName: string) => { onUpdate?.({ content: [{ type: "text", text: `  [${aName}] ${chunk.slice(0, 120)}` }] }); });
+        return { content: [{ type: "text", text: result.success ? `Pane "${result.paneId}" spawned for agent "${params.agentName}"` : `Failed to spawn pane: ${result.message}` }], details: { paneId: result.paneId, success: result.success } };
+      },
+      promptSnippet: "Spawn a sub-agent in a dedicated ZFS pane",
+    });
+
+    registerTool({
+      name: "zfs_stop_pane", label: "ZFS Stop Pane",
+      description: "Stop (terminate) a sub-agent pane by its ID.",
+      parameters: Type.Object({ paneId: Type.String({ description: "Pane ID to stop" }) }),
+      execute: async (_toolCallId: string, params: any, _signal: any, _onUpdate: any, ctx: any) => {
+        const result = await self.stopPane(params.paneId);
+        return { content: [{ type: "text", text: result ? `Pane "${params.paneId}" stopped.` : `Pane "${params.paneId}" not found or already stopped.` }], details: { paneId: params.paneId, success: result } };
+      },
+      promptSnippet: "Stop a ZFS pane",
+    });
+
+    registerTool({
+      name: "zfs_fleet_state", label: "ZFS Fleet State",
+      description: "Get the current fleet state: ZFS availability, pane counts, session info, platform.",
+      parameters: Type.Object({}),
+      execute: async (_toolCallId: string, _params: any, _signal: any, _onUpdate: any, ctx: any) => {
+        const state = self.getFleetState();
+        return { content: [{ type: "text", text: `ZFS Fleet State:\n  Zellij: ${state.zellijAvailable ? "✓ available" : "✗ unavailable"}\n  Session: ${state.sessionName}\n  Paused: ${state.paused}\n  Active panes: ${state.activePanes}\n  Exited panes: ${state.exitedPanes}\n  Active processes: ${state.activeProcesses}\n  Platform: ${state.platform.platform} (${state.platform.shell})\n  Shell: ${state.platform.shellArg} (${state.platform.shellFlag})` }], details: { state } };
+      },
+      promptSnippet: "Query ZFS fleet state",
+    });
+
+    registerTool({
+      name: "zfs_pause", label: "ZFS Pause",
+      description: "Pause all running panes (SIGSTOP / Windows equivalent).",
+      parameters: Type.Object({}),
+      execute: async (_toolCallId: string, _params: any, _signal: any, _onUpdate: any, ctx: any) => {
+        const result = await self.pauseAll();
+        return { content: [{ type: "text", text: result ? "All panes paused." : "Failed to pause panes." }], details: { paused: result } };
+      },
+      promptSnippet: "Pause all fleet panes",
+    });
+
+    registerTool({
+      name: "zfs_resume", label: "ZFS Resume",
+      description: "Resume all paused panes (SIGCONT).",
+      parameters: Type.Object({}),
+      execute: async (_toolCallId: string, _params: any, _signal: any, _onUpdate: any, ctx: any) => {
+        const result = await self.resumeAll();
+        return { content: [{ type: "text", text: result ? "All panes resumed." : "Failed to resume panes." }], details: { resumed: result } };
+      },
+      promptSnippet: "Resume all fleet panes",
+    });
+
+    registerTool({
+      name: "zfs_skip_agent", label: "ZFS Skip Agent",
+      description: "Skip (terminate) a specific agent's pane.",
+      parameters: Type.Object({ agentName: Type.String({ description: "Agent name to skip" }) }),
+      execute: async (_toolCallId: string, params: any, _signal: any, _onUpdate: any, ctx: any) => {
+        const result = self.skipPane(params.agentName);
+        return { content: [{ type: "text", text: result ? `Agent "${params.agentName}" skipped — pane terminated.` : `Agent "${params.agentName}" not found running.` }], details: { agent: params.agentName, skipped: result } };
+      },
+      promptSnippet: "Skip a specific agent",
+    });
+
+    registerTool({
+      name: "zfs_list_panes", label: "ZFS List Panes",
+      description: "List all active and exited panes in the fleet session.",
+      parameters: Type.Object({}),
+      execute: async (_toolCallId: string, _params: any, _signal: any, _onUpdate: any, ctx: any) => {
+        const panes = self.listPanes();
+        const lines = panes.map((p) => `  ${p.running ? "▸" : "✗"} ${p.name} (${p.paneId}) ${p.running ? "[running]" : `[exited:${p.exitCode ?? "?"}]`}`);
+        return { content: [{ type: "text", text: lines.length > 0 ? `Active panes:\n${lines.join("\n")}` : "No panes registered." }], details: { panes } };
+      },
+      promptSnippet: "List all fleet panes",
+    });
+
+    registerTool({
+      name: "zfs_status_bar_info", label: "ZFS Status Bar Info",
+      description: "Get the current status bar state: whether it's active, available, session info, and pane name.",
+      parameters: Type.Object({}),
+      execute: async (_toolCallId: string, _params: any, _signal: any, _onUpdate: any, ctx: any) => {
+        self.initStatusBar();
+        const info = self.getStatusBarInfo();
+        return { content: [{ type: "text", text: `ZFS Status Bar:\n  Active: ${info.active ? "✓ yes" : "○ no"}\n  Available: ${info.available ? "✓ yes" : "○ no"}\n  Session: ${info.session}\n  Pane: ${info.pane}` }], details: { statusbar: info } };
+      },
+      promptSnippet: "Query ZFS status bar state",
+    });
+
+    registerTool({
+      name: "zfs_status_bar_update", label: "ZFS Status Bar Update",
+      description: "Force an immediate update of the floating pane status bar.",
+      parameters: Type.Object({ refresh: Type.Optional(Type.Boolean({ description: "Whether to refresh (default: true)" })) }),
+      execute: async (_toolCallId: string, params: any, _signal: any, onUpdate: any, ctx: any) => {
+        self.setCwd(ctx.cwd);
+        if (!self.zellijAvailable) return { content: [{ type: "text", text: "ZFS not available. Status bar cannot be updated." }], details: { updated: false, reason: "zfs_unavailable" } };
+        self.initStatusBar();
+        if (params.refresh ?? true) self.refreshStatusBar();
+        return { content: [{ type: "text", text: (params.refresh ?? true) ? "Status bar updated and sent to floating pane." : "Status bar initialized. Call zfs_status_bar_update with refresh=true to update." }], details: { updated: true, refreshed: params.refresh ?? true } };
+      },
+      promptSnippet: "Update the ZFS floating pane status bar",
+    });
+
+    registerTool({
+      name: "zfs_status_bar_render", label: "ZFS Status Bar Render",
+      description: "Render the status bar as text.",
+      parameters: Type.Object({}),
+      execute: async (_toolCallId: string, _params: any, _signal: any, onUpdate: any, ctx: any) => {
+        self.setCwd(ctx.cwd);
+        if (!self.zellijAvailable) return { content: [{ type: "text", text: "ZFS not available." }], details: { rendered: false, reason: "zfs_unavailable" } };
+        self.initStatusBar();
+        const rendered = self.statusBarManager?.getLastRendered() || "[status bar not yet rendered]";
+        return { content: [{ type: "text", text: `--- ZFS Status Bar ---\n\n${rendered}\n\n---\nRendered at: ${new Date().toISOString()}` }], details: { rendered: true } };
+      },
+      promptSnippet: "Render the ZFS status bar as text",
+    });
+
+    registerTool({
+      name: "zfs_status_bar_toggle", label: "ZFS Status Bar Toggle",
+      description: "Toggle the floating pane status bar on/off.",
+      parameters: Type.Object({ enabled: Type.Optional(Type.Boolean({ description: "True to enable, false to disable, or omit to toggle" })) }),
+      execute: async (_toolCallId: string, params: any, _signal: any, onUpdate: any, ctx: any) => {
+        self.setCwd(ctx.cwd);
+        const info = self.getStatusBarInfo();
+        if (!info.available) return { content: [{ type: "text", text: "ZFS not available — status bar requires Zellij installed." }], details: { toggled: false, reason: "zfs_unavailable" } };
+        self.initStatusBar();
+        const targetOn = params.enabled ?? !info.active;
+        if (targetOn) {
+          self.initStatusBar(); self.refreshStatusBar();
+          return { content: [{ type: "text", text: "Status bar enabled." }] };
+        } else {
+          self.destroyStatusBar();
+          return { content: [{ type: "text", text: "Status bar disabled." }] };
+        }
+      },
+      promptSnippet: "Toggle the ZFS floating pane status bar",
+    });
+
+    registerTool({
+      name: "zfs_layout", label: "ZFS Layout",
+      description: "Generate or view the fleet Zellij layout configuration.",
+      parameters: Type.Object({ agents: Type.Array(Type.Object({ name: Type.String({ description: "Agent name" }), description: Type.String({ description: "Agent description" }) })), customWidth: Type.Optional(Type.Number({ description: "Left column width percentage" })), preview: Type.Optional(Type.Boolean({ description: "Preview the KDL layout string" })) }),
+      execute: async (_toolCallId: string, params: any, _signal: any, onUpdate: any, ctx: any) => {
+        self.setCwd(ctx.cwd);
+        const kdl = generateFleetLayout(params.agents, params.customWidth);
+        if (params.preview) onUpdate?.({ content: [{ type: "text", text: `--- KDL Layout ---\n${kdl}` }] });
+        const layoutPath = path.join(ctx.cwd, FLEET_LAYOUT_FILE);
+        try { fs.writeFileSync(layoutPath, kdl, "utf-8"); } catch { /* ignore */ }
+        return { content: [{ type: "text", text: `Fleet layout generated (${params.agents.length} agents, left:${params.customWidth ?? 60}%)\nSaved to: ${layoutPath}\n\nRun: zellij session create -s caravel --layout ${layoutPath}` }], details: { layout: kdl, savedPath: layoutPath } };
+      },
+      promptSnippet: "Generate fleet Zellij layout",
+    });
+  }
+}
+
+
+// ===========================================================================
 // Types
 // ============================================================================
 
@@ -329,9 +1305,9 @@ function parseAgentDef(content: string, source: "project" | "user"): AgentDefini
   return { name, description, model, tools, systemPrompt: body, source };
 }
 
-// ============================================================================
+// ===========================================================================
 // Helpers
-// ============================================================================
+// ===========================================================================
 
 function dirname(p: string): string { return path.dirname(p); }
 
@@ -363,8 +1339,6 @@ function formatCost(cost: number): string {
   if (cost < 0.001) return `$${(cost * 1000).toFixed(1)}m`;
   return `$${cost.toFixed(4)}`;
 }
-
-/** Generate actionable guidance based on the error messages encountered. */
 // ============================================================================
 // Fleet Error Diagnosis
 // ============================================================================
