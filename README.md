@@ -204,7 +204,12 @@ The main agent will:
 2. **Plan** — create incremental phases that build on what exists
 3. **Execute** — run phases with the fleet, reviewing at each step
 
-Or manually run `/analyze` to get a detailed codebase analysis report first.
+Or manually run `/analyze` to get a detailed codebase analysis report. The report includes:
+- **Pre-flight scan**: files/dirs count, detected languages, frameworks, entry points
+- **Agent & model metadata**: which agent ran, which model, tools available
+- **Execution stats**: elapsed time, turns, input/output/cache tokens, cost estimate
+- **The analysis report** from the agent
+- **Actionable error guidance** if anything failed
 
 ### Run /go — Auto-Orchestrate the Fleet
 
@@ -220,16 +225,37 @@ The `/go` command auto-orchestrates everything:
 
 ### Monitor the Widget Bar
 
-A persistent 6-line widget bar above the editor shows fleet status in real-time. It is always stable — never changes height or width:
+A persistent widget bar above the editor shows fleet status in real-time. It is always stable — never changes height or width:
 
+**Idle:**
 ```
 ╔══════════════════════════════════════════════════════════════╗
-║  CARAVEL FLEET  │  P1/3: Setup  │  ▸ RUN                   ║
-║  [████████░░░░░░░░] 40%  │  2/5 tasks  │  1m 23s            ║
-║  ▸ running: bash → npm install                              ║
-║  0 reviews  │  Elapsed: 1m 23s                              ║
+║  CARAVEL FLEET  │  ● IDLE                                   ║
+║  [░░░░░░░░░░░░░░░░░░░] 0%  │  5 agents configured  │  1h 12m║
+║  last: idle — no active work yet                            ║
+║  ● 0 reviews completed  │  Elapsed: 1h 12m                  ║
+║  ▸ fleet: 0 tokens                                           ║
 ╚══════════════════════════════════════════════════════════════╝
 ```
+
+**Running (shows per-task detail, agent models, and token counts):**
+```
+╔══════════════════════════════════════════════════════════════╗
+║  CARAVEL FLEET  │  P1/3: Codebase Analysis  │  ▸ RUN       ║
+║  [████████░░░░░░░░] 40%  │  2/5 tasks  │  1m 23s            ║
+║  ▸ P1 [RUN] developer → llama.cpp/Qwen3.6  ▸ P2 [WAIT]     ║
+║  2 reviews  │  Elapsed: 1m 23s                              ║
+║  ▸ tokens: 12.3k/8.1k │ [developer(12.3/8.1)]              ║
+╚══════════════════════════════════════════════════════════════╝
+```
+
+The widget bar shows:
+- **Phase label** with status (RUN / REV / DONE / FAILED)
+- **Progress bar** and task count
+- **Per-task detail** during execution: task index, agent name, model, and status
+- **Main agent activity** when idle (tool being called, path, time-ago)
+- **Active agents** with model names and token counts
+- **Fleet token totals** (input/output) for cost awareness
 
 Toggle visibility:
 ```
@@ -253,8 +279,9 @@ The main agent translates these into `fleet_control` and `review_task` calls beh
 | Command | Description |
 |---------|-------------|
 | `/go` | Auto-run all phases with review between each |
-| `/analyze` | Analyze existing codebase (structure, tech stack, dependencies) |
+| `/analyze` | Analyze existing codebase (pre-flight scan, agent metadata, full report) |
 | `/fleet` | Toggle the fleet widget bar visibility |
+| `/diagnose` | Diagnose failed phases/tasks with structured root-cause analysis |
 | `fleet_control(action="go")` | Auto-orchestrate fleet from code |
 | `fleet_control(action="pause\|resume\|skip\|next\|reset")` | Manual fleet control |
 | `plan_project(...)` | Define phases and tasks |
@@ -288,7 +315,7 @@ caravel/
 │   ├── models-ollama.json
 │   └── models-docker.json
 ├── extensions/
-│   └── caravel.ts        # Orchestrator (5 tools, non-blocking dashboard, subagent spawning)
+│   └── caravel.ts        # Orchestrator (7 tools, rich dashboard, subagent spawning, error diagnosis)
 ├── agents/
 │   ├── developer.md      # Developer agent (configurable model)
 │   ├── tech-lead.md      # Tech lead agent (configurable model)
@@ -334,6 +361,73 @@ Agents are discovered from two sources:
 - **Project agents**: `<project>/.pi/agents/*.md` (project-local, overrides user agents by name)
 
 This means you can have default agents installed globally and override specific ones per project.
+
+## Error Diagnosis
+
+When phases or tasks fail, use `fleet_error_diagnosis` or `/diagnose` to get a structured diagnosis:
+
+```javascript
+fleet_error_diagnosis()
+// or
+/diagnose
+```
+
+The diagnosis covers:
+- **Missing agents** — which agent is needed and how to create it
+- **Exit codes** — what non-zero codes mean and how to debug
+- **stderr content** — pattern-matched against known error types (permissions, timeouts, network errors)
+- **Token limits** — context window exceeded, budget overflows
+- **Rate limits** — API rate limiting from the provider
+- **Authentication** — invalid/expired API keys
+- **Model errors** — invalid model names or unavailable models
+- **Review loop exhaustion** — when reviews fail repeatedly
+
+Each cause includes: severity level (critical/warning/info), affected phase/task, root cause explanation, and step-by-step fix instructions.
+
+### Analyze Command
+
+The `/analyze` command now provides a rich pre-flight scan and metadata report:
+
+```
+✅ Codebase Analysis Complete
+
+▸ Agent & Model
+  • Agent: auditor
+  • Model: llama.cpp/Qwen3.6-35B
+  • Tools: read,write,edit,bash,find
+
+▸ Execution
+  • Elapsed: 45s
+  • Turns: 3
+  • Input Tokens: 12,340
+  • Output Tokens: 8,920
+  • Total Tokens: 21,260
+  • Cost: $0.0003
+
+▸ Pre-Flight Scan
+  ○ Total Files: 247
+  ○ Directories: 38
+  ○ Config Files: 12
+  ○ Test Infrastructure: ✓ Detected
+  ○ CI/CD Pipeline: ✗ Not detected
+  ○ Languages: TypeScript
+  ○ Frameworks: React, Next.js
+  ○ Build Tools: Vite
+  ○ Entry Points: index.tsx, server.ts, cli.ts
+```
+
+On failure:
+```
+⚠️ Analysis Encountered Issues
+
+▸ Errors
+  ✗ Exit code: 1
+  ✗ Subagent exited with non-zero code
+
+💡 Suggestions
+  → Check that the agent's dependencies and model are properly configured
+  → Run the agent manually with 'pi --model <model> <task>' to debug
+```
 
 ## Customization
 
