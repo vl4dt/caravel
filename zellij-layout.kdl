@@ -1,0 +1,240 @@
+// ═══════════════════════════════════════════════════════════════
+// Caravel Fleet — Zellij Workspace Layout
+// ═══════════════════════════════════════════════════════════════
+//
+// Session management
+// ──────────────────
+//   zellij action new-session -s caravel          Start fleet session
+//   zellij action switch-to-session caravel       Reconnect
+//   zellij action detach                            Detach (keeps session alive)
+//   zellij kill-session caravel                     Terminate
+//
+// Split conventions
+// ─────────────────
+//   Left  column (60%):  Main orchestrator pane — where the primary agent runs
+//   Right column (40%):  Agent tabs — cycle developer / tech-lead / designer (max 3)
+//   Floating (bottom):   Status bar — persistent 10-line fleet status display
+//
+// Layout philosophy
+// ─────────────────
+//   The fleet orchestrator is the command-and-control centre. Agent panes are
+//   diagnostic — you watch them work, not type in them.  The floating status bar
+//   shows all agents' status (running/idle/error), progress, and token usage
+//   in real-time so you can monitor progress without switching panes.
+//
+// Keyboard shortcuts (configured in zellij config, not in this file)
+// ───────────────────────────────────────────────────────────────────
+//   <leader> + d   →  switch to developer pane
+//   <leader> + t   →  switch to tech-lead pane
+//   <leader> + D   →  switch to designer pane
+//   <leader> + p   →  switch to planner pane
+//   <leader> + a   →  switch to auditor pane
+//   <leader> + s   →  switch to status bar
+//   <leader> + o   →  return to orchestrator (main pane)
+//   <leader> + w   →  toggle floating status bar on/off
+//   <leader> + 1-5 →  cycle tab within right column
+//
+//   Status bar auto-refreshes every 2 seconds with current fleet state.
+//
+// ═══════════════════════════════════════════════════════════════
+// Window configuration
+// ═══════════════════════════════════════════════════════════════
+
+// --- Main window: 3-tab layout for the fleet workspace ---
+window {
+    // Main orchestrator pane — the primary workspace
+    // This is where the main agent runs, phases are executed,
+    // and the fleet is orchestrated. It occupies the left 60%
+    // of the screen as the command-and-control centre.
+    pane {
+        type: "main"
+        align: "left"
+        size: 60
+        name: "orchestrator"
+        focus: true
+        // Start in the project root — where caravel runs
+        // Zellij will cd to the directory it was launched from
+        command: "zellij"
+        args: ["--help"]  // placeholder — replace with actual prompt/agent
+    }
+
+    // --- Right column: per-agent panes (tabbed, max 3 visible) ---
+    // The right 40% is split into tabs. Each tab shows one agent's
+    // output. Cycle through with <leader>+1-5 or the tab bar.
+
+    // Tab 1: Developer pane — active coding work
+    pane {
+        align: "right"
+        size: 40
+        name: "developer"
+        command: "zellij"
+        args: ["--help"]
+    }
+
+    // Tab 2: Tech Lead pane — architecture review & planning
+    pane {
+        align: "right"
+        size: 40
+        name: "tech-lead"
+        command: "zellij"
+        args: ["--help"]
+    }
+
+    // Tab 3: Designer pane — visual review & UI analysis
+    pane {
+        align: "right"
+        size: 40
+        name: "designer"
+        command: "zellij"
+        args: ["--help"]
+    }
+
+    // --- Optional auxiliary tabs (uncomment as needed) ---
+
+    // Tab 4: Planner pane — project planning & phase decomposition
+    // pane {
+    //     align: "right"
+    //     size: 40
+    //     name: "planner"
+    //     command: "zellij"
+    //     args: ["--help"]
+    // }
+
+    // Tab 5: Auditor pane — codebase analysis & pre-flight scan
+    // pane {
+    //     align: "right"
+    //     size: 40
+    //     name: "auditor"
+    //     command: "zellij"
+    //     args: ["--help"]
+    // }
+
+    // --- Floating status bar ---
+    // Persistent 10-line status bar showing:
+    //   - Agent statuses (running/idle/error) with token usage
+    //   - Phase progress and task counts
+    //   - Review iterations and elapsed time
+    // The floating pane is managed by the ZFS status bar manager.
+    // Use <leader>+w to toggle visibility.
+    floating {
+        name: "status-bar"
+        y: "bottom"
+        x: "right"
+        max_width: 80
+        height: 10
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Layout variants
+// ═══════════════════════════════════════════════════════════════
+//
+// These are alternative layouts for different workflow modes.
+// Switch between them with: zellij action switch-layout <name>
+//
+
+// --- Minimal mode: orchestrator + 1 agent + status bar ---
+// Use during focused implementation phases.
+layout {
+    name: "minimal"
+
+    window {
+        pane {
+            type: "main"
+            align: "left"
+            size: 70
+            name: "orchestrator"
+            focus: true
+        }
+
+        pane {
+            align: "right"
+            size: 30
+            name: "developer"
+            focus: true
+        }
+
+        floating {
+            name: "status-bar"
+            y: "bottom"
+            x: "right"
+            max_width: 80
+            height: 10
+        }
+    }
+}
+
+// --- Review mode: orchestrator + tech-lead + designer visible ---
+// Use during the two-stage review gate.
+layout {
+    name: "review"
+
+    window {
+        // Left: orchestrator
+        pane {
+            type: "main"
+            align: "left"
+            size: 50
+            name: "orchestrator"
+            focus: true
+        }
+
+        // Top-right: tech-lead review
+        pane {
+            align: "right"
+            size: 50
+            name: "tech-lead"
+        }
+
+        // Below tech-lead: designer review
+        pane {
+            align: "right"
+            size: 50
+            name: "designer"
+        }
+
+        floating {
+            name: "status-bar"
+            y: "bottom"
+            x: "right"
+            max_width: 80
+            height: 10
+        }
+    }
+}
+
+// --- Wide mode: side-by-side orchestrator + 2 agents ---
+// Use during active development with both review agents visible.
+layout {
+    name: "wide"
+
+    window {
+        pane {
+            type: "main"
+            align: "left"
+            size: 33
+            name: "orchestrator"
+            focus: true
+        }
+
+        pane {
+            align: "right"
+            size: 33
+            name: "developer"
+        }
+
+        pane {
+            align: "right"
+            size: 34
+            name: "tech-lead"
+        }
+
+        floating {
+            name: "status-bar"
+            y: "bottom"
+            x: "right"
+            max_width: 80
+            height: 10
+        }
+    }
+}

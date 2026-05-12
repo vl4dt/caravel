@@ -1,119 +1,87 @@
-# Caravel — Project Assessment & Current State
+# Caravel-Zellij Fleet Integration — Project Plan
 
-## Current State Assessment
+> Generated: 2026-05-12 from project planning phase
+> Phases: 3
+> Total Tasks: 10
 
-### What Caravel Is
-A fleet orchestration system for Pi with supervisor-worker pattern, two-stage review loops, and a persistent widget bar.
+---
 
-### What Works Well
-- Clean supervisor-worker architecture with configurable models
-- Two-stage review (code + design) with auto-fix loops
-- Agent discovery from user+project directories
-- State persistence across sessions
-- **Stable widget bar** — always exactly 6 lines, never changes height or width
-- **Robust error handling** — all agent functions report actionable errors when agents are missing or fail
-- `/analyze` actually runs agents and reports results/errors clearly
+## Phases
 
-### Agent Function Error Handling (Current)
+### ✅ Phase 1: Core Architecture & Zellij Layout Engine
 
-| Function | Error Cases | How Errors Are Handled |
-|----------|-------------|------------------------|
-| `runAnalysisPhase` | No analyzer agent, subagent failure | Returns `{tasks, report, errors}` with actionable "add agent" guidance |
-| `runCodeReview` | No tech-lead agent, subagent failure | Returns `{approved, error: "tech-lead"}` with available agents list |
-| `runDesignReview` | No designer agent, subagent failure | Returns `{approved, error: "designer"}` with available agents list |
-| `runDeveloperFix` | No developer agent, no task output | Returns `{success, error: "..."}` with actionable guidance |
-| `runReviewInternal` | Any upstream error | Checks `error` field first, aborts with clear message |
-| `review_task` tool | Any upstream error | Early-returns with actionable message including available agents |
+**Status**: pending
 
-### `/analyze` Command (Current)
-- Actually executes the analyzer agent via `runSubagent()`
-- Returns `✅` with report on success
-- Returns `⚠️` with errors and actionable guidance on failure
-- If no analyzer agent: shows "add an auditor/developer agent" guidance
-- If subagent fails: shows exit code, stderr, and specific fix instructions
+#### Tasks
 
-## Current Architecture
+- [○] **T1**: Create zellij-layout.kdl — a fleet workspace layout with main orchestrator pane, per-agent panes (max 3 visible), and a 
+  - **Agent**: developer
+  - **Review**: code + design
+- [○] **T2**: Create extensions/zellij-fleet.ts — the Zellij process manager. Key responsibilities: (1) Generate and launch Zellij ses
+  - **Agent**: developer
+  - **Review**: code + design
+- [○] **T3**: Create skills/zellij-fleet.md — the skill documentation describing how users interact with Zellij fleet mode. Include: s
+  - **Agent**: developer
+  - **Review**: code + design
 
-### Widget Bar Only (No Overlay)
+### ✅ Phase 2: Real-time Monitoring & Follow System
 
-| Component | API | Purpose |
-|-----------|-----|---------|
-| Widget bar | `ctx.ui.setWidget()` | Always-visible 6-line progress bar |
-| `/fleet` command | Toggles widget | Show/hide widget bar |
+**Status**: pending
 
-The overlay dashboard was removed because it caused UI glitches, size instability, and poor UX.
+#### Tasks
 
-### Widget Bar Layout
+- [○] **T1**: Implement the follow/unfollow system: when the user follows an agent, show its live output in the main pane. Support swi
+  - **Agent**: developer
+  - **Review**: code + design
+- [○] **T2**: Implement the Zellij status bar — a persistent summary showing all agents' status (running/idle/error), progress, and to
+  - **Agent**: developer
+  - **Review**: code + design
+- [○] **T3**: Add new Pi commands: /zellij-start (launch fleet in Zellij), /zellij-stop (shutdown Zellij session), /zellij-follow (fol
+  - **Agent**: developer
+  - **Review**: code + design
+- [○] **T4**: Add the Zellij fleet orchestrator tool `zellij_fleet` — a single tool that replaces multiple individual agent spawns wit
+  - **Agent**: developer
+  - **Review**: code + design
 
-Always exactly 6 lines, fixed 62-char content width:
+### ⏳ Phase 3: User Interaction & Professional Orchestration
 
-```
-╔══════════════════════════════════════════════════════════════╗
-║  CARAVEL FLEET  │  P1/3: Setup  │  ▸ RUN                   ║
-║  [████████░░░░░░░░] 40%  │  2/5 tasks  │  1m 23s            ║
-║  ▸ running: bash → npm install                              ║
-║  0 reviews  │  Elapsed: 1m 23s                              ║
-╚══════════════════════════════════════════════════════════════╝
-```
+**Status**: pending
 
-### Event System
+#### Tasks
 
-Updates on:
-- `agent_end` → refresh widget bar
-- `tool_call` → refresh widget bar
-- Fleet state changes → refresh widget bar
+- [○] **T1**: Implement the 'user follow mode' — when the user follows an agent, allow them to type commands into that agent's pane. T
+  - **Agent**: developer
+  - **Review**: code + design
+- [○] **T2**: Create zellij-fleet-config.md — configuration guide for users. Covers Zellij installation, recommended keybindings, layo
+  - **Agent**: developer
+  - **Review**: code + design
+- [○] **T3**: Update SKILL.md with Zellij fleet mode documentation — new workflow section showing how to use Zellij mode for fleet orc
+  - **Agent**: developer
+  - **Review**: code + design
 
-## Current Implementation Status
+## Summary
 
-### ✅ Completed
-1. Persistent widget bar (always stable, never changes size)
-2. Overlay dashboard removal
-3. Widget bar idle/active state consistency (both 6 lines)
-4. Agent function error handling (runCodeReview, runDesignReview, runDeveloperFix)
-5. `/analyze` command proper error reporting
-6. `runAnalysisPhase` consolidation (single analyzer path)
-7. Documentation updates (README, SKILL.md, PROJECT-DESIGN.md, PROJECT-PLAN.md)
-8. `fleet_error_diagnosis` tool — structured diagnosis of fleet failures (missing agents, exit codes, stderr, token limits, rate limits, auth errors)
-9. `/diagnose` command — CLI entry point for error diagnosis
+- **Completed**: 4 tasks
+- **Failed**: 0 tasks
+- **Remaining**: 6 tasks
 
-### Remaining Work (Future)
-- Planner agent conversation flow (natural language planning)
-- Additional agent types (qa-engineer, etc.)
-- Widget bar visual refinements (color themes, compact mode)
+## ZFS Status Bar — Implementation Notes
 
-## Success Criteria (Current)
+The ZFS status bar (Phase 2, Task 2) is implemented in `extensions/zfs_status_bar.ts`:
 
-1. **Stable UI**: Widget bar never changes height or width, always visible
-2. **Clear errors**: Every agent function reports actionable errors
-3. **/analyze works**: Actually runs agents, reports results and errors
-4. **Natural language workflow**: User describes project, fleet handles orchestration
+- **10-line floating pane** showing agent statuses, phase progress, token usage
+- **Auto-refreshes** every 2 seconds when ZFS mode is active
+- **Tools**: `zfs_status_bar_info`, `zfs_status_bar_update`, `zfs_status_bar_render`, `zfs_status_bar_toggle`
+- **Layout**: All layout variants updated with `height: 10` for the status bar pane
+- **Fallback**: Shows inline status bar text when ZFS is not available
 
-## File Structure
+## Next Steps
 
-```
-caravel/
-├── SKILL.md              # Main skill for the main agent (agent-facing guide)
-├── package.json          # Pi package manifest
-├── README.md             # This file (user-facing documentation)
-├── LICENSE
-├── PROJECT-DESIGN.md     # Widget bar design reference (current)
-├── PROJECT-PLAN.md       # Project roadmap (this file)
-├── extensions/
-│   └── caravel.ts        # Orchestrator (5 tools, widget bar, subagent spawning)
-├── agents/
-│   ├── developer.md      # Developer agent (configurable model)
-│   ├── tech-lead.md      # Tech lead agent (configurable model)
-│   ├── designer.md       # Designer agent (configurable model, needs vision)
-│   ├── planner.md        # Conversational planner (interviews user, generates plans)
-│   └── auditor.md        # Codebase analyzer (scans existing projects)
-├── skills/
-│   ├── code-review.md    # Code review checklist for tech-lead
-│   ├── design-review.md  # Design review checklist for designer
-│   └── fleet-orchestration.md  # Auto-orchestration guidance for the main agent
-└── prompts/
-    └── task-brief.md     # Task brief template
-```
+1. Run `plan_project()` with more specific tasks if needed
+2. Run `/go` to execute the fleet
+3. Monitor progress in the widget bar
 
-## License
+---
 
-MIT
+> Architecture reference: [PROJECT-DESIGN.md](./PROJECT-DESIGN.md)
+> Full analysis: [ANALYSIS.md](./ANALYSIS.md)

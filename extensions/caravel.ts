@@ -31,6 +31,7 @@ import {
   matchesKey,
 } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import { ZFS } from "./zellij-fleet";
 
 // ============================================================================
 // Types
@@ -189,6 +190,73 @@ let fleetState: FleetState = {
 let widgetVisible = true;
 let _pi: ExtensionAPI | null = null;
 const activeProcesses = new Map<string, { proc: ReturnType<typeof spawn>; signal: AbortSignal }>();
+
+// ── ZFS fleet instance (bridges ZFS process management with fleet state) ──
+let zfs: ZFS | null = null;
+
+function ensureZFS(): ZFS {
+  if (!zfs) {
+    zfs = new ZFS();
+    zfs.setCwd(process.cwd());
+    zfs.checkAndInitZellij();
+  }
+  return zfs;
+}
+
+// ============================================================================
+// Follow system — track which agent's live output the user is watching
+// ============================================================================
+
+interface FollowState {
+  agent: string | null;      // Name of the agent being followed (null = no follow)
+  output: string;             // Accumulated output buffer
+  isLive: boolean;            // Whether this agent is currently running
+}
+
+let followedAgent: FollowState = {
+  agent: null,
+  output: "",
+  isLive: false,
+};
+
+// Per-agent output capture: maps task/agent IDs to their output
+const agentOutputBuffers = new Map<string, { stdout: string; stderr: string; running: boolean }>();
+
+/** Append text to the followed agent's buffer if it matches. */
+function appendToFollowedAgent(agentName: string, text: string): void {
+  if (followedAgent.agent === agentName) {
+    followedAgent.output += text;
+  }
+  const key = `agent-${agentName}`;
+  const buf = agentOutputBuffers.get(key);
+  if (buf) {
+    buf.stdout += text;
+  }
+}
+
+/** Append stderr to the followed agent's buffer if it matches. */
+function appendErrToFollowedAgent(agentName: string, text: string): void {
+  if (followedAgent.agent === agentName) {
+    followedAgent.output += text;
+  }
+  const key = `agent-${agentName}`;
+  const buf = agentOutputBuffers.get(key);
+  if (buf) {
+    buf.stderr += text;
+  }
+}
+
+/** Get the accumulated output for a given agent. */
+function getAgentOutput(agentName: string): string {
+  const key = `agent-${agentName}`;
+  const buf = agentOutputBuffers.get(key);
+  return buf ? buf.stdout : "";
+}
+
+/** Check if an agent is currently running. */
+function isAgentRunning(agentName: string): boolean {
+  return agentOutputBuffers.has(`agent-${agentName}`);
+}
 
 // ============================================================================
 // Agent Discovery
@@ -772,6 +840,16 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
   const dim = (t: string) => th.fg("dim", t);
   const edge = (t: string) => th.fg("borderMuted", "│") + "  " + t;
 
+  // ── Build follow indicator ──
+  let followLine = "";
+  if (followedAgent.agent) {
+    const followIcon = followedAgent.isLive ? th.fg("success", "▸") : th.fg("dim", "○");
+    const followColor = followedAgent.isLive ? "success" : "dim";
+    const status = followedAgent.isLive ? "LIVE" : "IDLE";
+    const followStatusColor = followedAgent.isLive ? "success" : "dim";
+    followLine = `${followIcon} ${followedAgent.agent.padEnd(14)} [${th.fg(followStatusColor, status)}]`;
+  }
+
   if (fleetState.phases.length === 0) {
     // ── IDLE ──
     const agentCount = discoverAgents("both").length;
@@ -782,9 +860,9 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
     return [
       edge(`${title}  ${muted("│")}  ${th.fg(sc, statusIcon + " " + statusText)}`),
       edge(`[░░░░░░░░░░░░░░░░░░░░] 0%  ${muted("│")}  ${agentCount} agents configured  │  ${elapsed}`),
-      edge(muted("  last: idle — no active work yet")),
+      followLine ? edge(th.fg("dim", `  ${followLine}`)) : edge(muted("  last: idle — no active work yet")),
       edge(`${th.fg("dim", `● ${fleetState.reviewIterations} reviews completed`)}  ${muted("│")}  ${muted(`Elapsed: ${elapsed}`)}`),
-      edge(muted(`▸ fleet: ${formatTokens(fleetState.totalFleetTokens)}`)),
+      edge(muted(`▸ fleet: ${formatTokens(fleetState.totalFleetTokens)}${followLine ? "  │  " + th.fg("dim", `followed: ${followedAgent.agent}`) : ""}`)),
     ];
   }
 
@@ -886,12 +964,25 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
     line3 = muted("  idle — waiting for work");
   }
 
+  // Build a follow output snippet to append to the last line
+  let followOutput = "";
+  if (followedAgent.agent) {
+    const buf = agentOutputBuffers.get(`agent-${followedAgent.agent}`);
+    if (buf && buf.stdout.trim()) {
+      const lines = buf.stdout.trim().split("\n");
+      const tail = lines.slice(-1).join(" ").trim().slice(-50);
+      if (tail) {
+        followOutput = `  │  ▸ follow: ${followedAgent.agent} → ${truncate(tail, 40)}`;
+      }
+    }
+  }
+
   return [
     edge(`${th.fg("accent", "CARAVEL FLEET")}  ${muted("│")}  ${phaseLabel}  ${muted("│")}  ${th.fg(sColor, sIcon + " " + sText)}`),
     edge(`[${bar}] ${progress}%  ${muted("│")}  ${completedTasks}/${totalTasks} tasks  │  ${elapsed}`),
-    edge(line3),
+    edge(line3 + (followOutput ? followOutput : "")),
     edge(`${th.fg("dim", `${fleetState.reviewIterations} reviews`)}  ${muted("│")}  ${muted(`Elapsed: ${elapsed}`)}`),
-    edge(tokenLine),
+    edge(tokenLine + (followLine ? `  │  ${followLine}` : "")),
   ];
 }
 
@@ -1113,6 +1204,22 @@ async function runPhaseInternal(
     const taskProgressId = `task-${task.id}`;
     let lastProgressReport = 0;
     let lastTokenCount = 0;
+
+    // Initialize agent output buffer
+    const agentKey = `agent-${agentDef.name}`;
+    agentOutputBuffers.set(agentKey, { stdout: "", stderr: "", running: true });
+    fleetState.activeAgents = fleetState.activeAgents.map((a) =>
+      a.name === agentDef.name ? { ...a, currentTask: truncate(task.description, 30) } : a
+    );
+    if (!fleetState.activeAgents.find((a) => a.name === agentDef.name)) {
+      fleetState.activeAgents.push({
+        name: agentDef.name,
+        status: "running" as const,
+        currentTask: truncate(task.description, 30),
+        model: agentDef.model,
+      });
+    }
+
     const progressCb = (chunk: string, tokenCount?: number) => {
       const now = Date.now();
       if (now - lastProgressReport > 1000) {
@@ -1120,6 +1227,11 @@ async function runPhaseInternal(
         lastTokenCount = tokenCount ?? lastTokenCount;
         onUpdate?.([{ type: "text", text: `  ▸ ${agentDef.name} (${agentDef.model || "unknown"}): ${truncate(chunk.slice(-60), 40)} [${formatTokens(lastTokenCount)} tokens]` }]);
       }
+      // Capture agent output for follow
+      const buf = agentOutputBuffers.get(agentKey);
+      if (buf) buf.stdout += chunk;
+      // Also route to followed agent buffer in real-time
+      appendToFollowedAgent(agentDef.name, chunk);
     };
 
     const result = await runSubagent(agentDef, task.description, ctx.cwd, signal, taskProgressId, progressCb);
@@ -1132,6 +1244,16 @@ async function runPhaseInternal(
     task.tokensUsed = result.usage.input + result.usage.output;
     task.messageCount = result.usage.turns;
     fleetState.recentOutput = result.output || result.stderr;
+
+    // Capture stderr and mark buffer as done
+    const agentBuf = agentOutputBuffers.get(agentKey);
+    if (agentBuf) {
+      agentBuf.stdout += result.stderr || "";
+      agentBuf.running = false;
+    }
+    if (result.stderr) {
+      appendErrToFollowedAgent(agentDef.name, result.stderr);
+    }
 
     fleetState.activeAgents = fleetState.activeAgents.map((a) =>
       a.name === agentDef.name
@@ -1719,8 +1841,17 @@ You MUST save your complete analysis report to the file "ANALYSIS.md" in the pro
 
   const startTime = Date.now();
 
+  // Capture output for follow
+  const analysisKey = `agent-${analyzer.name}-analysis`;
+  agentOutputBuffers.set(analysisKey, { stdout: "", stderr: "", running: true });
+  const analysisOutputCb = (chunk: string) => {
+    const buf = agentOutputBuffers.get(analysisKey);
+    if (buf) buf.stdout += chunk;
+    appendToFollowedAgent(analyzer.name, chunk);
+  };
+
   try {
-    const result = await runSubagent(analyzer, analysisPrompt, ctx.cwd, undefined, `analysis`, onUpdate as any);
+    const result = await runSubagent(analyzer, analysisPrompt, ctx.cwd, undefined, `analysis`, analysisOutputCb as any);
     const elapsed = Date.now() - startTime;
 
     analysisTask.status = result.exitCode === 0 && result.output?.trim().length > 0 ? "complete" : "failed";
@@ -1728,6 +1859,13 @@ You MUST save your complete analysis report to the file "ANALYSIS.md" in the pro
     analysisTask.stderr = result.stderr || "";
     analysisTask.reviewFeedback = result.stderr || "";
     fleetState.recentOutput = result.output || result.stderr || "";
+
+    // Capture stderr
+    const analysisBuf = agentOutputBuffers.get(analysisKey);
+    if (analysisBuf) {
+      analysisBuf.stdout += result.stderr || "";
+      analysisBuf.running = false;
+    }
 
     const tokens = {
       input: result.usage?.input || 0,
@@ -2110,6 +2248,172 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
+  // ---- Follow system commands ----
+
+  pi.registerCommand("follow", {
+    description: "Follow an agent's live output in the main pane. Use /follow list to see available agents, /follow agent_name to follow, /follow none to unfollow, /follow switch to switch between running agents.",
+    handler: async (args: string[], ctx) => {
+      const cmd = (args[0] ?? "none").toLowerCase();
+
+      if (cmd === "list") {
+        const runningAgents = fleetState.activeAgents.filter((a) => a.status === "running");
+        const completedAgents = fleetState.activeAgents.filter((a) => a.status === "idle");
+        const lines: string[] = [];
+        lines.push("╔═══════════════════════════════════════════════════════╗");
+        lines.push("║  FOLLOW TARGETS                                       ║");
+        lines.push("╠═══════════════════════════════════════════════════════╣");
+
+        if (runningAgents.length > 0) {
+          lines.push("║  ▸ Running:                                           ║");
+          for (const a of runningAgents) {
+            const icon = followedAgent.agent === a.name ? "▸" : "○";
+            const name = a.name.padEnd(14);
+            const task = (a.currentTask || "").padEnd(30);
+            const model = a.model || "?";
+            lines.push(`║    ${icon} ${name} → ${model}  (${task})           ║`);
+          }
+          lines.push("");
+        }
+
+        if (completedAgents.length > 0) {
+          lines.push("║  ○ Completed:                                         ║");
+          for (const a of completedAgents) {
+            const name = a.name.padEnd(14);
+            const model = a.model || "?";
+            lines.push(`║    ○ ${name} → ${model}  (idle)           ║`);
+          }
+          lines.push("");
+        }
+
+        if (runningAgents.length === 0 && completedAgents.length === 0) {
+          lines.push("║    No agents have run yet.                            ║");
+        }
+
+        const followStatus = followedAgent.agent
+          ? `Currently following: ${followedAgent.agent}`
+          : "Not following anyone";
+        lines.push("║");
+        lines.push(`║  Status: ${followStatus.padEnd(37)}║`);
+        lines.push("║");
+        lines.push("║  Commands:                                            ║");
+        lines.push("║    /follow <agent>  — follow agent output             ║");
+        lines.push("║    /follow switch   — toggle between running agents   ║");
+        lines.push("║    /follow none     — stop following                  ║");
+        lines.push("║    /follow list     — show this list                  ║");
+        lines.push("╚═══════════════════════════════════════════════════════╝");
+
+        return { content: [{ type: "text", text: lines.join("\n") }] };
+      }
+
+      if (cmd === "switch") {
+        const runningAgents = fleetState.activeAgents.filter((a) => a.status === "running");
+        if (runningAgents.length === 0) {
+          return { content: [{ type: "text", text: "No running agents to follow." }] };
+        }
+        // Find the current followed agent in the running list
+        const currentIndex = runningAgents.findIndex((a) => a.name === followedAgent.agent);
+        // Switch to the next running agent
+        const nextIndex = (currentIndex + 1) % runningAgents.length;
+        const nextAgent = runningAgents[nextIndex];
+
+        // Capture the current output before switching
+        if (followedAgent.agent) {
+          agentOutputBuffers.set(`agent-${followedAgent.agent}`, {
+            stdout: followedAgent.output,
+            stderr: "",
+            running: false,
+          });
+        }
+
+        followedAgent = {
+          agent: nextAgent.name,
+          output: getAgentOutput(nextAgent.name),
+          isLive: true,
+        };
+        refreshWidget(ctx);
+        ctx.ui.notify(`Following: ${nextAgent.name}`, "info");
+        return { content: [{ type: "text", text: `Now following ${nextAgent.name}'s output.` }] };
+      }
+
+      if (cmd === "none") {
+        // Capture current output before clearing
+        if (followedAgent.agent) {
+          agentOutputBuffers.set(`agent-${followedAgent.agent}`, {
+            stdout: followedAgent.output,
+            stderr: "",
+            running: false,
+          });
+        }
+        const unfollowedName = followedAgent.agent;
+        followedAgent = { agent: null, output: "", isLive: false };
+        refreshWidget(ctx);
+        if (unfollowedName) {
+          ctx.ui.notify(`Unfollowed ${unfollowedName}`, "info");
+          return { content: [{ type: "text", text: `Stopped following ${unfollowedName}.` }] };
+        }
+        return { content: [{ type: "text", text: "Already not following anyone." }] };
+      }
+
+      // Try to follow the named agent
+      const agentName = cmd;
+      const targetAgent = fleetState.activeAgents.find((a) => a.name === agentName);
+      if (!targetAgent) {
+        // Check if it's a known agent that hasn't run yet
+        const allAgents = discoverAgents("both");
+        const known = allAgents.find((a) => a.name === agentName);
+        if (!known) {
+          return { content: [{ type: "text", text: `Unknown agent "${agentName}". Use /follow list to see available agents.` }] };
+        }
+        // Known agent — start following, buffer is empty until it runs
+        // Capture previous if any
+        if (followedAgent.agent) {
+          agentOutputBuffers.set(`agent-${followedAgent.agent}`, {
+            stdout: followedAgent.output,
+            stderr: "",
+            running: false,
+          });
+        }
+        followedAgent = {
+          agent: agentName,
+          output: "",
+          isLive: false,
+        };
+        agentOutputBuffers.set(`agent-${agentName}`, { stdout: "", stderr: "", running: false });
+        refreshWidget(ctx);
+        ctx.ui.notify(`Will follow ${agentName} when it runs.`, "info");
+        return { content: [{ type: "text", text: `Will follow ${agentName} when it starts.` }] };
+      }
+
+      // Agent is running
+      if (followedAgent.agent === agentName) {
+        return { content: [{ type: "text", text: `Already following ${agentName}.` }] };
+      }
+
+      // Capture previous agent output
+      if (followedAgent.agent) {
+        agentOutputBuffers.set(`agent-${followedAgent.agent}`, {
+          stdout: followedAgent.output,
+          stderr: "",
+          running: false,
+        });
+      }
+
+      followedAgent = {
+        agent: agentName,
+        output: getAgentOutput(agentName),
+        isLive: true,
+      };
+      agentOutputBuffers.set(`agent-${agentName}`, {
+        stdout: getAgentOutput(agentName),
+        stderr: "",
+        running: true,
+      });
+      refreshWidget(ctx);
+      ctx.ui.notify(`Following: ${agentName}`, "info");
+      return { content: [{ type: "text", text: `Now following ${agentName}'s output.` }] };
+    },
+  });
+
   // ---- /go: auto-orchestrate all phases ----
 
   pi.registerCommand("go", {
@@ -2191,6 +2495,19 @@ export default function (pi: ExtensionAPI) {
     description: "Analyze an existing codebase: scan structure, detect tech stack, map dependencies",
     handler: async (_args, ctx) => {
       ctx.ui.notify("Analyzing codebase...", "info");
+
+      // Register analyzer in activeAgents for follow tracking
+      const allAgents = discoverAgents("both");
+      const analyzerAgent = allAgents.find((a) => a.name === "auditor") || allAgents.find((a) => a.name === "developer");
+      if (analyzerAgent) {
+        fleetState.activeAgents = fleetState.activeAgents.filter((a) => a.name !== analyzerAgent.name);
+        fleetState.activeAgents.push({
+          name: analyzerAgent.name,
+          status: "running" as const,
+          currentTask: "Codebase Analysis",
+          model: analyzerAgent.model,
+        });
+      }
 
       // Run the actual analysis (creates real tasks that execute subagents)
       const result = await runAnalysisPhase(ctx);
@@ -2455,6 +2772,10 @@ export default function (pi: ExtensionAPI) {
         refreshWidget(ctx);
         onUpdate?.({ content: [{ type: "text", text: `  ${agentDef.name}: ${truncate(task.description, 60)}` }] });
 
+        // Initialize agent output buffer
+        const agentKey2 = `agent-${agentDef.name}`;
+        agentOutputBuffers.set(agentKey2, { stdout: "", stderr: "", running: true });
+
         // Real-time progress reporting for this subagent
         let lastProgressReport = 0;
         let lastTokenCount = 0;
@@ -2465,6 +2786,11 @@ export default function (pi: ExtensionAPI) {
             lastTokenCount = tokenCount ?? lastTokenCount;
             onUpdate?.({ content: [{ type: "text", text: `  ▸ ${agentDef.name} (${agentDef.model || "unknown"}): ${truncate(chunk.slice(-60), 40)} [${formatTokens(lastTokenCount)} tokens]` }] });
           }
+          // Capture agent output for follow
+          const buf2 = agentOutputBuffers.get(agentKey2);
+          if (buf2) buf2.stdout += chunk;
+          // Also route to followed agent buffer in real-time
+          appendToFollowedAgent(agentDef.name, chunk);
         };
 
         const result = await runSubagent(agentDef, task.description, ctx.cwd, signal, `task-${task.id}`, progressCb);
@@ -2477,6 +2803,16 @@ export default function (pi: ExtensionAPI) {
         task.messageCount = result.usage.turns;
         task.status = result.exitCode === 0 ? "complete" as const : "failed" as const;
         fleetState.recentOutput = result.output || result.stderr;
+
+        // Capture stderr and mark buffer as done
+        const agentBuf2 = agentOutputBuffers.get(agentKey2);
+        if (agentBuf2) {
+          agentBuf2.stdout += result.stderr || "";
+          agentBuf2.running = false;
+        }
+        if (result.stderr) {
+          appendErrToFollowedAgent(agentDef.name, result.stderr);
+        }
 
         fleetState.activeAgents = fleetState.activeAgents.map((a) =>
           a.name === agentDef.name
@@ -2554,9 +2890,24 @@ If everything passes, explicitly state: "APPROVED: code quality review passed"
 Tasks under review:
 ${tasks.map((t) => `Task: ${t.description}\nImplementation:\n${t.output || "(no output)"}\n`).join("\n---\n")}`;
 
-    const result = await runSubagent(techLead, reviewPrompt, ctx.cwd, signal, `code-review-${phaseIdx}`, onUpdate as any);
+    // Capture output for follow
+    const crKey = `agent-tech-lead-review`;
+    agentOutputBuffers.set(crKey, { stdout: "", stderr: "", running: true });
+    const reviewOutputCb = (chunk: string) => {
+      const buf = agentOutputBuffers.get(crKey);
+      if (buf) buf.stdout += chunk;
+      appendToFollowedAgent("tech-lead", chunk);
+    };
+    const result = await runSubagent(techLead, reviewPrompt, ctx.cwd, signal, `code-review-${phaseIdx}`, reviewOutputCb as any);
     const feedback = result.output || "";
     const approved = feedback.toUpperCase().includes("APPROVED") && !feedback.toLowerCase().includes("fix") && !feedback.toLowerCase().includes("error") && !feedback.toLowerCase().includes("vulnerability");
+
+    // Capture stderr
+    const crBuf = agentOutputBuffers.get(crKey);
+    if (crBuf) {
+      crBuf.stdout += result.stderr || "";
+      crBuf.running = false;
+    }
 
     return { approved, feedback, agentUsed: "tech-lead", error: result.exitCode !== 0 || !feedback ? `Tech-lead agent exited with code ${result.exitCode}${!feedback ? " and produced no output" : ""}` : undefined, usage: result.usage ? { input: result.usage.input, output: result.usage.output } : undefined };
   }
@@ -2595,9 +2946,24 @@ If everything passes, explicitly state: "APPROVED: design review passed"
 Tasks under review:
 ${tasks.map((t) => `Task: ${t.description}\nImplementation:\n${t.output || "(no output)"}\n`).join("\n---\n")}`;
 
-    const result = await runSubagent(designer, reviewPrompt, ctx.cwd, signal, `design-review-${phaseIdx}`, onUpdate as any);
+    // Capture output for follow
+    const drKey = `agent-designer-review`;
+    agentOutputBuffers.set(drKey, { stdout: "", stderr: "", running: true });
+    const reviewOutputCb2 = (chunk: string) => {
+      const buf = agentOutputBuffers.get(drKey);
+      if (buf) buf.stdout += chunk;
+      appendToFollowedAgent("designer", chunk);
+    };
+    const result = await runSubagent(designer, reviewPrompt, ctx.cwd, signal, `design-review-${phaseIdx}`, reviewOutputCb2 as any);
     const feedback = result.output || "";
     const approved = feedback.toUpperCase().includes("APPROVED") && !feedback.toLowerCase().includes("fix") && !feedback.toLowerCase().includes("glitch") && !feedback.toLowerCase().includes("contrast");
+
+    // Capture stderr
+    const drBuf = agentOutputBuffers.get(drKey);
+    if (drBuf) {
+      drBuf.stdout += result.stderr || "";
+      drBuf.running = false;
+    }
 
     return { approved, feedback, agentUsed: "designer", error: result.exitCode !== 0 || !feedback ? `Designer agent exited with code ${result.exitCode}${!feedback ? " and produced no output" : ""}` : undefined, usage: result.usage ? { input: result.usage.input, output: result.usage.output } : undefined };
   }
@@ -2626,7 +2992,15 @@ ${reviewFeedback}
 Provide the complete corrected output with specific file changes. Address each issue mentioned in the feedback.
 `;
 
-    const fixResult = await runSubagent(developer, fixPrompt, ctx.cwd, signal, `fix-${task.id}-${reviewType}`, onUpdate as any);
+    // Capture output for follow
+    const fixKey = `agent-developer-fix-${task.id}`;
+    agentOutputBuffers.set(fixKey, { stdout: "", stderr: "", running: true });
+    const fixOutputCb = (chunk: string) => {
+      const buf = agentOutputBuffers.get(fixKey);
+      if (buf) buf.stdout += chunk;
+      appendToFollowedAgent("developer", chunk);
+    };
+    const fixResult = await runSubagent(developer, fixPrompt, ctx.cwd, signal, `fix-${task.id}-${reviewType}`, fixOutputCb as any);
     task.output = buildTaskOutput(fixResult.output, fixResult.stderr);
     task.stderr = fixResult.stderr || "";
     task.reviewFeedback = reviewFeedback;
@@ -2635,6 +3009,13 @@ Provide the complete corrected output with specific file changes. Address each i
     task.tokensUsed = fixResult.usage.input + fixResult.usage.output;
     task.messageCount = fixResult.usage.turns;
     fleetState.recentOutput = fixResult.output || "";
+
+    // Capture stderr
+    const fixBuf = agentOutputBuffers.get(fixKey);
+    if (fixBuf) {
+      fixBuf.stdout += fixResult.stderr || "";
+      fixBuf.running = false;
+    }
 
     return { success: fixResult.exitCode === 0, error: fixResult.exitCode !== 0 ? `Developer agent exited with code ${fixResult.exitCode}` : undefined, usage: fixResult.usage ? { input: fixResult.usage.input, output: fixResult.usage.output } : undefined };
   }
@@ -3114,5 +3495,560 @@ Status: idle | Reviews: ${fleetState.reviewIterations} | Elapsed: ${formatDurati
     },
 
     promptSnippet: "Control fleet execution: pause, resume, skip, next, reset, or go",
+  });
+
+  // ============================================================================
+  // /zellij-* commands — ZFS fleet session management
+  // ============================================================================
+
+  // ---- /zellij-start: Launch fleet in Zellij ----
+
+  pi.registerCommand("zellij-start", {
+    description: "Launch the Caravel fleet in a Zellij session. Creates the session (if not running), spawns the orchestrator and agent panes, and initializes the floating status bar. If Zellij is not installed, shows installation instructions.",
+    handler: async (_args, ctx) => {
+      const zfs = ensureZFS();
+
+      // Check ZFS availability
+      const check = await zfs.checkAndInitZellij();
+      if (!check.available) {
+        return {
+          content: [{
+            type: "text",
+            text:
+              `⚠️ ZFS: Zellij not found on this system.\n\n` +
+              `${check.message}\n\n` +
+              `Fleet will fall back to background process execution.\n` +
+              `For the full fleet experience, install Zellij:\n` +
+              `  Linux:  curl -LO https://github.com/zellij-org/zellij/releases/latest/download/zellij-x86_64-unknown-linux-musl.tar.gz && tar xzf zellij-*.tar.gz && sudo mv zellij /usr/local/bin/\n` +
+              `  macOS:  brew install zellij\n` +
+              `  Windows: winget install Zellij.Zellij`,
+          }],
+        };
+      }
+
+      // Check if session already exists
+      const state = zfs.getFleetState();
+      if (state.activePanes > 0 || state.activeProcesses > 0) {
+        return {
+          content: [{
+            type: "text",
+            text:
+              `ZFS session "${state.sessionName}" is already running.\n` +
+              `  Active panes: ${state.activePanes}\n` +
+              `  Active processes: ${state.activeProcesses}\n` +
+              `  Platform: ${state.platform.platform} (${state.platform.shell})\n\n` +
+              `Use /zellij-stop to shut down, or /zellij-panes to list panes.`,
+          }],
+        };
+      }
+
+      // Discover available agents and create session
+      const allAgents = discoverAgents("both");
+      const agentDefs = allAgents
+        .filter((a) => a.name !== "orchestrator")
+        .map((a) => ({
+          name: a.name,
+          description: a.description,
+        }));
+
+      if (agentDefs.length === 0) {
+        return {
+          content: [{
+            type: "text",
+            text:
+              `⚠️ No agents configured. Cannot start fleet.\n\n` +
+              `Add agent files to your agents/ directory with valid frontmatter:\n` +
+              `  ---\n` +
+              `  name: developer\n` +
+              `  description: Code implementation agent\n` +
+              `  model: gpt-4o\n` +
+              `  ---\n` +
+              `  Agent system prompt...`,
+          }],
+        };
+      }
+
+      // Load layout or use default
+      const layout = zfs.getLayoutConfig();
+      const layoutPath = path.join(ctx.cwd, "zellij-layout.kdl");
+      const hasCustomLayout = fs.existsSync(layoutPath);
+
+      const result = await zfs.createSession(agentDefs, ctx.cwd);
+
+      if (!result.success) {
+        return {
+          content: [{
+            type: "text",
+            text: `Failed to create ZFS session: ${result.message}`,
+          }],
+        };
+      }
+
+      // Initialize status bar
+      zfs.initStatusBar();
+
+      // Show launch summary
+      const summaryLines: string[] = [];
+      summaryLines.push(`✅ ZFS fleet session "${state.sessionName}" started.`);
+      summaryLines.push(``);
+      summaryLines.push(`Session: ${state.sessionName}`);
+      summaryLines.push(`Layout: ${hasCustomLayout ? `custom (${layoutPath})` : "default"}`);
+      summaryLines.push(`Agent panes: ${agentDefs.length}`);
+      summaryLines.push(`Platform: ${state.platform.platform} (${state.platform.shell})`);
+      summaryLines.push(``);
+      summaryLines.push(`Agent panes:`);
+      for (const agent of agentDefs) {
+        summaryLines.push(`  ▸ ${agent.name.padEnd(14)} — ${agent.description.slice(0, 40)}`);
+      }
+      summaryLines.push(``);
+      summaryLines.push(`Navigation:`);
+      summaryLines.push(`  <leader>+o  →  Orchestrator   |  <leader>+d  →  Developer`);
+      summaryLines.push(`  <leader>+t  →  Tech Lead      |  <leader>+D  →  Designer`);
+      summaryLines.push(`  <leader>+s  →  Status bar     |  <leader>+w  →  Toggle status bar`);
+      summaryLines.push(`  <leader>+1-5  →  Cycle panes  |  /zellij-panes  →  List panes`);
+
+      return {
+        content: [{ type: "text", text: summaryLines.join("\n") }],
+        details: { session: state.sessionName, agents: agentDefs, layout: hasCustomLayout ? "custom" : "default" },
+      };
+    },
+  });
+
+  // ---- /zellij-stop: Shutdown ZFS session ----
+
+  pi.registerCommand("zellij-stop", {
+    description: "Shutdown the ZFS fleet session. Terminates all agent panes, stops background processes, and kills the Zellij session. The fleet state is preserved for resumption.",
+    handler: async (_args, ctx) => {
+      const zfs = ensureZFS();
+      const state = zfs.getFleetState();
+
+      if (!state.zellijAvailable) {
+        return {
+          content: [{
+            type: "text",
+            text: `ZFS is not available. No session to stop.`,
+          }],
+        };
+      }
+
+      const activePanes = state.activePanes + state.activeProcesses;
+      if (activePanes === 0) {
+        // Kill session even if no panes (session might still exist)
+        const killed = await zfs.killSession(state.sessionName);
+        return {
+          content: [{
+            type: "text",
+            text:
+              `ZFS session "${state.sessionName}" stopped.\n` +
+              `Session was empty (no active panes).`,
+          }],
+          details: { stopped: true, session: state.sessionName },
+        };
+      }
+
+      // Clean up everything
+      await zfs.cleanup();
+
+      const summaryLines: string[] = [];
+      summaryLines.push(`ZFS session "${state.sessionName}" stopped.`);
+      summaryLines.push(``);
+      summaryLines.push(`Terminated:`);
+      summaryLines.push(`  Panes:  ${state.activePanes}`);
+      summaryLines.push(`  Processes: ${state.activeProcesses}`);
+      summaryLines.push(`  Session: ${state.sessionName}`);
+      summaryLines.push(`  Platform: ${state.platform.platform} (${state.platform.shell})`);
+
+      return {
+        content: [{ type: "text", text: summaryLines.join("\n") }],
+        details: { stopped: true, panes: state.activePanes, processes: state.activeProcesses, session: state.sessionName },
+      };
+    },
+  });
+
+  // ---- /zellij-panes: List available agent panes ----
+
+  pi.registerCommand("zellij-panes", {
+    description: "List all ZFS panes with their status. Shows agent names, pane IDs, running/exited state, and exit codes. Use this to find pane IDs for follow or stop operations.",
+    handler: async (_args, ctx) => {
+      const zfs = ensureZFS();
+      const state = zfs.getFleetState();
+
+      const lines: string[] = [];
+      lines.push("╔═══════════════════════════════════════════════════════════╗");
+      lines.push("║  ZFS PANES                                               ║");
+      lines.push("╠═══════════════════════════════════════════════════════════╣");
+
+      // Session header
+      const sessionIcon = state.zellijAvailable ? "✓" : "○";
+      const sessionColor = state.zellijAvailable ? "success" : "dim";
+      const zfsLabel = state.zellijAvailable ? "✓ available" : "○ not available";
+      lines.push(`║  Session: ${state.sessionName.padEnd(38)}║`);
+      lines.push(`║  ZFS: ${zfsLabel.padEnd(38)}║`);
+      lines.push(`║  Platform: ${`${state.platform.platform} (${state.platform.shell})`.padEnd(38)}║`);
+      lines.push("║");
+
+      // List active panes
+      const panes = zfs.listPanes();
+      const runningPanes = panes.filter((p) => p.running);
+      const exitedPanes = panes.filter((p) => p.exited);
+
+      if (runningPanes.length > 0) {
+        lines.push("║  ▸ Running:                                               ║");
+        for (const p of runningPanes) {
+          const name = (p.name || "unnamed").padEnd(14);
+          const pid = (p.paneId || "").slice(0, 30);
+          lines.push(`║    ▸ ${name} (${pid.padEnd(30)}) [running]               ║`);
+        }
+        lines.push("");
+      }
+
+      if (exitedPanes.length > 0) {
+        lines.push("║  ○ Exited:                                               ║");
+        for (const p of exitedPanes) {
+          const name = (p.name || "unnamed").padEnd(14);
+          const pid = (p.paneId || "").slice(0, 30);
+          const code = p.exitCode != null ? String(p.exitCode) : "?";
+          lines.push(`║    ○ ${name} (${pid.padEnd(30)}) [exited:${code.padEnd(4)}]         ║`);
+        }
+        lines.push("");
+      }
+
+      if (runningPanes.length === 0 && exitedPanes.length === 0) {
+        lines.push("║    No panes registered.                                  ║");
+        lines.push("");
+      }
+
+      // Fleet state summary
+      const totalTasks = fleetState.phases.reduce((s, p) => s + p.tasks.length, 0);
+      const completedTasks = fleetState.phases.reduce((s, p) => s + p.tasks.filter((t) => t.status === "complete").length, 0);
+      const progress = totalTasks > 0 ? `${Math.round((completedTasks / totalTasks) * 100)}%` : "0%";
+      const elapsed = formatDuration(Date.now() - (fleetState.startTime || Date.now()));
+
+      lines.push("║  Fleet State:                                             ║");
+      lines.push(`║    Phases: ${fleetState.currentPhaseIndex + 1}/${fleetState.phases.length}  │  Progress: ${progress.padEnd(6)}  │  Elapsed: ${elapsed.padEnd(10)}║`);
+      lines.push(`║    Tasks: ${completedTasks}/${totalTasks}  │  Reviews: ${fleetState.reviewIterations}  │  Tokens: ${formatTokens(fleetState.totalFleetTokens).padEnd(10)}║`);
+      if (fleetState.paused) lines.push(`║    ⚠️  PAUSED                                              ║`);
+      lines.push("║");
+      lines.push("║  Commands:                                                ║");
+      lines.push(`║    /zellij-panes  — This list                            ║`);
+      lines.push(`║    /zellij-follow <name>  — Follow an agent              ║`);
+      lines.push(`║    /zellij-status   — Fleet overview                     ║`);
+      lines.push(`║    /zellij-start    — Start fleet session                ║`);
+      lines.push(`║    /zellij-stop     — Stop fleet session                 ║`);
+      lines.push("╚═══════════════════════════════════════════════════════════╝");
+
+      return {
+        content: [{ type: "text", text: lines.join("\n") }],
+        details: { panes, state },
+      };
+    },
+  });
+
+  // ---- /zellij-follow: Follow an agent's output ----
+
+  pi.registerCommand("zellij-follow", {
+    description: "Follow an agent's live output in the main pane. Use /zellij-follow list to see available agents, /zellij-follow <agent_name> to follow, /zellij-follow none to stop following, /zellij-follow switch to cycle between running agents.",
+    handler: async (args: string[], ctx) => {
+      const cmd = (args[0] ?? "none").toLowerCase();
+      const zfs = ensureZFS();
+
+      if (cmd === "list") {
+        const runningAgents = fleetState.activeAgents.filter((a) => a.status === "running");
+        const completedAgents = fleetState.activeAgents.filter((a) => a.status === "idle");
+        const lines: string[] = [];
+        lines.push("╔═══════════════════════════════════════════════════════╗");
+        lines.push("║  ZFS FOLLOW TARGETS                                   ║");
+        lines.push("╠═══════════════════════════════════════════════════════╣");
+
+        // ZFS session status
+        const state = zfs.getFleetState();
+        const zfsIcon = state.zellijAvailable ? "✓" : "○";
+        lines.push(`║  ZFS: ${zfsIcon} ${state.sessionName.padEnd(35)}║`);
+        lines.push("");
+
+        if (runningAgents.length > 0) {
+          lines.push("║  ▸ Running:                                           ║");
+          for (const a of runningAgents) {
+            const icon = followedAgent.agent === a.name ? "▸" : "○";
+            const name = a.name.padEnd(14);
+            const task = (a.currentTask || "idle").padEnd(28);
+            const model = (a.model || "?").padEnd(16);
+            lines.push(`║    ${icon} ${name}  ${model}  ${task}      ║`);
+          }
+          lines.push("");
+        }
+
+        if (completedAgents.length > 0) {
+          lines.push("║  ○ Completed:                                         ║");
+          for (const a of completedAgents) {
+            const name = a.name.padEnd(14);
+            const model = (a.model || "?").padEnd(16);
+            const tokens = a.tokensUsed != null ? `${formatTokens(a.tokensUsed)}t` : "?";
+            lines.push(`║    ○ ${name}  ${model}  ${tokens.padEnd(14)}║`);
+          }
+          lines.push("");
+        }
+
+        if (runningAgents.length === 0 && completedAgents.length === 0) {
+          lines.push("║    No agents have run yet.                            ║");
+        }
+
+        const followStatus = followedAgent.agent
+          ? `Following: ${followedAgent.agent}`
+          : "Not following anyone";
+        lines.push("║");
+        lines.push(`║  Status: ${followStatus.padEnd(37)}║`);
+        lines.push("║");
+        lines.push("║  Commands:                                            ║");
+        lines.push(`║    /zellij-follow <agent>  — Follow agent output      ║`);
+        lines.push(`║    /zellij-follow switch   — Cycle between agents    ║`);
+        lines.push(`║    /zellij-follow none     — Stop following           ║`);
+        lines.push(`║    /zellij-follow list     — Show this list           ║`);
+        lines.push("╚═══════════════════════════════════════════════════════╝");
+
+        return { content: [{ type: "text", text: lines.join("\n") }] };
+      }
+
+      if (cmd === "switch") {
+        const runningAgents = fleetState.activeAgents.filter((a) => a.status === "running");
+        if (runningAgents.length === 0) {
+          return { content: [{ type: "text", text: "No running agents to follow." }] };
+        }
+        const currentIndex = runningAgents.findIndex((a) => a.name === followedAgent.agent);
+        const nextIndex = (currentIndex + 1) % runningAgents.length;
+        const nextAgent = runningAgents[nextIndex];
+
+        if (followedAgent.agent) {
+          agentOutputBuffers.set(`agent-${followedAgent.agent}`, {
+            stdout: followedAgent.output,
+            stderr: "",
+            running: false,
+          });
+        }
+
+        followedAgent = {
+          agent: nextAgent.name,
+          output: getAgentOutput(nextAgent.name),
+          isLive: true,
+        };
+        agentOutputBuffers.set(`agent-${nextAgent.name}`, { stdout: "", stderr: "", running: true });
+        refreshWidget(ctx);
+        ctx.ui.notify(`ZFS: Following ${nextAgent.name}`, "info");
+        return { content: [{ type: "text", text: `Now following ${nextAgent.name}'s output.` }] };
+      }
+
+      if (cmd === "none") {
+        if (followedAgent.agent) {
+          agentOutputBuffers.set(`agent-${followedAgent.agent}`, {
+            stdout: followedAgent.output,
+            stderr: "",
+            running: false,
+          });
+        }
+        const unfollowedName = followedAgent.agent;
+        followedAgent = { agent: null, output: "", isLive: false };
+        refreshWidget(ctx);
+        if (unfollowedName) {
+          ctx.ui.notify(`ZFS: Unfollowed ${unfollowedName}`, "info");
+          return { content: [{ type: "text", text: `Stopped following ${unfollowedName}.` }] };
+        }
+        return { content: [{ type: "text", text: "Already not following anyone." }] };
+      }
+
+      // Try to follow the named agent
+      const agentName = cmd;
+      const targetAgent = fleetState.activeAgents.find((a) => a.name === agentName);
+      const allAgents = discoverAgents("both");
+      const knownAgent = allAgents.find((a) => a.name === agentName);
+
+      if (!targetAgent && !knownAgent) {
+        return { content: [{ type: "text", text: `Unknown agent "${agentName}". Use /zellij-follow list to see available agents.` }] };
+      }
+
+      if (followedAgent.agent === agentName) {
+        return { content: [{ type: "text", text: `Already following ${agentName}.` }] };
+      }
+
+      // Capture previous agent output
+      if (followedAgent.agent) {
+        agentOutputBuffers.set(`agent-${followedAgent.agent}`, {
+          stdout: followedAgent.output,
+          stderr: "",
+          running: false,
+        });
+      }
+
+      // Ensure buffer exists
+      const agentKey = `agent-${agentName}`;
+      if (!agentOutputBuffers.has(agentKey)) {
+        agentOutputBuffers.set(agentKey, { stdout: "", stderr: "", running: false });
+      }
+
+      followedAgent = {
+        agent: agentName,
+        output: getAgentOutput(agentName),
+        isLive: targetAgent?.status === "running" || false,
+      };
+
+      // Update the buffer status
+      const buf = agentOutputBuffers.get(agentKey);
+      if (buf) {
+        buf.running = targetAgent?.status === "running" || false;
+      }
+
+      // Try ZFS follow if agent has a pane
+      if (targetAgent && targetAgent.status === "running") {
+        // Try to subscribe to the agent's ZFS pane output
+        const zfsPanes = zfs.listPanes();
+        const matchingPane = zfsPanes.find((p) => p.name === agentName && p.running);
+        if (matchingPane) {
+          zfs.followPane(matchingPane.paneId, (chunk: string, paneName: string) => {
+            appendToFollowedAgent(paneName, chunk);
+          });
+        }
+      }
+
+      refreshWidget(ctx);
+      ctx.ui.notify(`ZFS: Following ${agentName}`, "info");
+      return { content: [{ type: "text", text: `Now following ${agentName}'s output.` }] };
+    },
+  });
+
+  // ---- /zellij-status: Show fleet overview ----
+
+  pi.registerCommand("zellij-status", {
+    description: "Show a comprehensive fleet overview: ZFS session status, fleet state (phases, tasks, progress), active agents with token usage, and quick action commands.",
+    handler: async (_args, ctx) => {
+      const zfs = ensureZFS();
+      const state = zfs.getFleetState();
+      const allAgents = discoverAgents("both");
+      const totalTasks = fleetState.phases.reduce((s, p) => s + p.tasks.length, 0);
+      const completedTasks = fleetState.phases.reduce((s, p) => s + p.tasks.filter((t) => t.status === "complete").length, 0);
+      const progress = totalTasks > 0 ? `${Math.round((completedTasks / totalTasks) * 100)}%` : "0%";
+      const elapsed = formatDuration(Date.now() - (fleetState.startTime || Date.now()));
+
+      const lines: string[] = [];
+      lines.push("╔═══════════════════════════════════════════════════════════╗");
+      lines.push("║  CARAVEL FLEET OVERVIEW                                  ║");
+      lines.push("╠═══════════════════════════════════════════════════════════╣");
+
+      // ── ZFS Session Status ──
+      lines.push("║  ── ZFS Session ──                                      ║");
+      const zfsIcon = state.zellijAvailable ? "✓" : "○";
+      const zfsColor = state.zellijAvailable ? "success" : "dim";
+      lines.push(`║    ZFS: ${zfsIcon} ${state.sessionName.padEnd(35)}║`);
+      lines.push(`║    Platform: ${`${state.platform.platform} (${state.platform.shell})`.padEnd(35)}║`);
+      lines.push(`║    Shell: ${state.platform.shellArg.padEnd(37)}║`);
+
+      const activePanes = state.activePanes;
+      const exitedPanes = state.exitedPanes;
+      const activeProcs = state.activeProcesses;
+      lines.push(`║    Panes: ${activePanes} active / ${exitedPanes} exited  │  Processes: ${activeProcs}${state.paused ? "  ⚠️  PAUSED" : "".padEnd(14)}║`);
+      lines.push("║");
+
+      // ── Fleet State ──
+      lines.push("║  ── Fleet State ──                                      ║");
+
+      if (fleetState.phases.length === 0) {
+        lines.push("║    Status: idle                                          ║");
+        lines.push(`║    Reviews: ${fleetState.reviewIterations}  │  Tokens: ${formatTokens(fleetState.totalFleetTokens).padEnd(27)}║`);
+      } else {
+        const currentPhase = fleetState.phases[fleetState.currentPhaseIndex];
+        const phaseLabel = currentPhase
+          ? `P${fleetState.currentPhaseIndex + 1}/${fleetState.phases.length}: ${currentPhase.name}`
+          : "No active phase";
+
+        const sIcon = currentPhase
+          ? currentPhase.status === "complete" ? "✓" :
+            currentPhase.status === "failed" ? "✗" :
+            currentPhase.status === "reviewing" ? "◉" :
+            currentPhase.status === "running" ? "▸" :
+            "○"
+          : "○";
+        const sText = currentPhase
+          ? (currentPhase.status === "complete" ? "DONE" :
+             currentPhase.status === "failed" ? "FAILED" :
+             currentPhase.status === "reviewing" ? "REV" :
+             currentPhase.status === "running" ? "RUN" :
+             "?")
+          : "?";
+        const sColor = currentPhase
+          ? (currentPhase.status === "complete" ? "success" :
+             currentPhase.status === "failed" ? "error" :
+             "accent")
+          : "dim";
+
+        lines.push(`║    ${sIcon} ${sText} ${phaseLabel.padEnd(44)}║`);
+        lines.push(`║    Progress: ${progress.padEnd(6)}  │  Tasks: ${completedTasks}/${totalTasks}  │  Elapsed: ${elapsed.padEnd(10)}║`);
+        lines.push(`║    Reviews: ${fleetState.reviewIterations}  │  Tokens: ${formatTokens(fleetState.totalFleetTokens).padEnd(27)}║`);
+        if (fleetState.paused) lines.push(`║    ⚠️  PAUSED                                          ║`);
+      }
+      lines.push("║");
+
+      // ── Phases Detail ──
+      if (fleetState.phases.length > 0) {
+        lines.push("║  ── Phases ──                                           ║");
+        for (const [i, phase] of fleetState.phases.entries()) {
+          const done = phase.tasks.filter((t) => t.status === "complete").length;
+          const total = phase.tasks.length;
+          const icon = phase.status === "complete" ? "✓" :
+            phase.status === "failed" ? "✗" :
+            phase.status === "running" || phase.status === "reviewing" ? "▸" :
+            phase.status === "pending" ? "○" : "?";
+          const idx = i + 1;
+          const current = idx === fleetState.currentPhaseIndex + 1 ? " ← current" : "";
+          lines.push(`║    ${icon} P${idx}: ${phase.name.padEnd(32)}║`);
+          lines.push(`║       ${done}/${total} tasks${current.padEnd(24)}║`);
+        }
+        lines.push("║");
+      }
+
+      // ── Active Agents ──
+      const activeAgentList = fleetState.activeAgents.filter((a) => a.status !== "idle");
+      if (activeAgentList.length > 0) {
+        lines.push("║  ── Active Agents ──                                    ║");
+        for (const agent of activeAgentList) {
+          const icon = agent.status === "running" ? "▸" :
+            agent.status === "reviewing" ? "◉" :
+            agent.status === "error" ? "✗" : "○";
+          const status = agent.status === "running" ? "RUNNING" :
+            agent.status === "reviewing" ? "REV" :
+            agent.status === "error" ? "ERROR" :
+            "IDLE";
+          const statusColor = agent.status === "running" ? "accent" :
+            agent.status === "error" ? "error" : "dim";
+          const model = (agent.model || "?").padEnd(16);
+          const task = (agent.currentTask || "idle").padEnd(30);
+          const inputT = formatTokens(agent.inputTokens || 0);
+          const outputT = formatTokens(agent.outputTokens || 0);
+          lines.push(`║    ${icon} ${agent.name.padEnd(14)} ${model} ${task}${statusColor === "accent" ? `  [${status}]  ${inputT}/${outputT}` : `  [${status}]`}`);
+        }
+        lines.push("║");
+      }
+
+      // ── Quick Actions ──
+      lines.push("║  ── Quick Actions ──                                    ║");
+      const zfsRunning = state.activePanes > 0 || state.activeProcesses > 0;
+      lines.push(`║    /zellij-start    — ${zfsRunning ? "Fleet already running" : "Start ZFS fleet".padEnd(30)}║`);
+      lines.push(`║    /zellij-stop     — ${zfsRunning ? "Stop ZFS fleet" : "No session to stop".padEnd(28)}║`);
+      lines.push(`║    /zellij-panes    — List all panes                    ║`);
+      lines.push(`║    /zellij-follow   — Follow agent output               ║`);
+      lines.push(`║    /zellij-status   — This overview                     ║`);
+      lines.push(`║    /follow <agent>  — Follow agent (general)            ║`);
+      lines.push(`║    /fleet           — Toggle widget bar                  ║`);
+      lines.push(`║    /go              — Auto-orchestrate all phases        ║`);
+      lines.push(`║    /diagnose        — Diagnose errors                    ║`);
+      if (fleetState.phases.length > 0) {
+        lines.push(`║    fleet_status      — Fleet status query               ║`);
+        lines.push(`║    fleet_control(action="pause")  — Pause fleet         ║`);
+        lines.push(`║    fleet_control(action="resume") — Resume fleet        ║`);
+      }
+      lines.push("╚═══════════════════════════════════════════════════════════╝");
+
+      return {
+        content: [{ type: "text", text: lines.join("\n") }],
+        details: { state, fleetState, zfs },
+      };
+    },
   });
 }

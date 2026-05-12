@@ -16,6 +16,7 @@ allowed-tools: plan_project,run_phase,review_task,fleet_control,fleet_status,fle
 | `fleet-orchestration.md` | — | Auto-orchestration guidance for the main agent |
 | `code-review.md` | — | Code review checklist for the tech-lead agent |
 | `design-review.md` | — | Design review checklist for the designer agent |
+| `zellij-fleet.md` | `/zellij-*` | ZFS user guide — workspace layout, keyboard shortcuts, follow mode, monitoring, and troubleshooting |
 
 ## Complete Workflow
 
@@ -36,6 +37,15 @@ analyze   →  /analyze  →  ANALYSIS.md  →  /plan  →  PLAN.md  →  /go  �
 2. **Plan** — `plan_project()` to decompose into phases
 3. **Execute** — `/go` auto-orchestrates phases with review
 4. **Iterate** — fix review feedback, advance to next phase
+
+### Scenario 3: ZFS Mode (Terminal Fleet)
+
+1. **Install Zellij** (once): `brew install zellij` / `winget install Zellij.Zellij`
+2. **Start ZFS**: `/zellij-start` — creates session, panes, floating status bar
+3. **Describe** your project in the orchestrator pane
+4. **Monitor** panes in real-time: `/zellij-follow <agent>`, `/zfs_list_panes`
+5. **Control** the fleet: `/zfs_pause`, `/zfs_resume`, `/zfs_skip_agent`
+6. **Detach** during long runs: `Ctrl+Shift+d` in ZFS, resume later with `/zellij-panes`
 
 ## Key Files
 
@@ -316,7 +326,75 @@ Developer completes task
 Each task tracks: `codeReviewStatus` (approved/needs_fix) and `designReviewStatus` (approved/needs_fix).
 Both must be approved for the task to be complete.
 
-The fleet dashboard is a **persistent 6-line widget bar** always visible above the editor. It never changes height or width, providing a stable visual anchor.
+## ZFS Mode — Zellij Fleet Session
+
+Caravel can run the fleet inside a dedicated [Zellij](https://zellij.dev) terminal multiplexer for a full terminal-based fleet workspace.
+
+```
+┌────────────────────────────┬──────────────────────────┐
+│    orchestrator (60%)      │  agent panes (40%)       │
+│    Fleet command-and-      │  developer / tech-lead / │
+│    control centre          │  designer / planner      │
+├────────────────────────────┤                          │
+│                            │  ┌────────────────────┐  │
+│                            │  │  status bar        │  │
+│                            │  │  (10-line float)   │  │
+│                            │  │  agent grid        │  │
+│                            │  │  phase progress    │  │
+│                            │  │  token tracking    │  │
+│                            │  └────────────────────┘  │
+└────────────────────────────┴──────────────────────────┘
+```
+
+### Starting ZFS
+
+```bash
+# 1. Install Zellij (if you haven't)
+#    macOS:  brew install zellij
+#    Linux:  curl -LO https://github.com/zellij-org/zellij/releases/latest/download/zellij-x86_64-unknown-linux-musl.tar.gz
+#    Windows: winget install Zellij.Zellij
+
+# 2. Start the fleet
+/zellij-start
+```
+
+### Layout Variants
+
+| Layout | Use Case |
+|--------|----------|
+| `fleet` (default) | Full workspace — orchestrator + all agent tabs |
+| `minimal` | Focused coding — orchestrator + developer |
+| `review` | Two-stage review — orchestrator + tech-lead + designer |
+| `wide` | Side-by-side — orchestrator + developer + tech-lead |
+
+Switch during execution: `zellij action switch-layout <name>`
+
+### ZFS Keybindings
+
+| Shortcut | Action |
+|----------|--------|
+| `Ctrl+o` | Orchestrator |
+| `Ctrl+d` | Developer |
+| `Ctrl+t` | Tech-lead |
+| `Ctrl+D` | Designer |
+| `Ctrl+w` | Toggle status bar |
+| `Ctrl+s` | Save layout |
+| `Ctrl+Shift+d` | Detach (leave running) |
+
+### ZFS Monitoring
+
+```bash
+/zfs_fleet_state    # ZFS health check
+/zfs_list_panes     # List all panes
+/zfs_status_bar_update  # Force refresh
+/zfs_pause          # Pause all panes (SIGSTOP)
+/zfs_resume         # Resume all panes (SIGCONT)
+/zfs_skip_agent --agent-name <name>  # Skip agent
+```
+
+> **No ZFS installed?** Fleet falls back to background processes automatically.
+
+---
 
 Toggle visibility with `/fleet`. The widget bar shows:
 - **Line 1**: Top border `╔...╗`
@@ -330,3 +408,46 @@ When idle (no phases):
 - Shows agent count, review count, elapsed time
 - Shows last agent action with time ago
 - Always exactly the same 6 lines, same height, same width
+
+## ZFS Mode — Zellij Status Bar
+
+When ZFS (Zellij Fleet Session) is active, the **floating status bar** replaces/augments the pi widget bar. It shows:
+
+```
+╔══════════════════════════════════════════════════════════════╗
+║          CARAVEL FLEET [ZFS MODE] │ P1/3                   ║
+║  ● developer  ◉ tech-lead  ○ designer  │  3 agents        ║
+║  P1/3: Implementation  [████████░░░░░░░░░░░░░░░░] 40%  2/5 tasks  3m 42s  ▸  ║
+║  ▸ developer  [node]  Implement auth middleware  │ 12.5k  ║
+║  ● idle — waiting for work                               ║
+║  ● idle — waiting for work                               ║
+║  ● idle — waiting for work                               ║
+║  ▸ 12.5k / 3.2k  │  fleet: 45k tokens  │  2 reviews      ║
+║  Elapsed: 3m 42s  │  ZFS                                ║
+╚══════════════════════════════════════════════════════════════╝
+```
+
+### Status Bar Features
+
+- **Agent grid**: All agents' statuses (running▸/idle●/error✗) in a compact row
+- **Phase info**: Progress bar, task count, elapsed time
+- **Per-agent detail**: Name, model, current task, token usage
+- **Token summary**: Per-agent input/output + fleet total
+- **Auto-refresh**: Updates every 2 seconds
+
+### ZFS Tools
+
+| Tool | Purpose |
+|------|--------|
+| `zfs_status_bar_info` | Query status bar state |
+| `zfs_status_bar_update` | Force refresh the floating pane |
+| `zfs_status_bar_render` | Render status bar as text |
+| `zfs_status_bar_toggle` | Enable/disable the status bar |
+
+### Layouts
+
+All layout variants include the status bar floating pane:
+- **default**: Full fleet workspace (60/40 split + 3 agent tabs)
+- **minimal**: Orchestrator + 1 agent + status bar
+- **review**: Orchestrator + tech-lead + designer + status bar
+- **wide**: Orchestrator + developer + tech-lead + status bar
