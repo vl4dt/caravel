@@ -1,6 +1,6 @@
 # Caravel
 
-Fleet orchestration for Pi — multi-agent software development with supervisor-worker pattern, two-stage review loops, and a non-blocking fleet dashboard. Works with any model provider (local or cloud).
+Fleet orchestration for Pi — multi-agent software development with supervisor-worker pattern and two-stage review loops. Works with any model provider (local or cloud).
 
 ## Architecture
 
@@ -218,24 +218,23 @@ The `/go` command auto-orchestrates everything:
 - Auto-fixes review issues
 - Reports progress
 
-### Monitor the Dashboard
+### Monitor the Widget Bar
 
-Open the fleet dashboard to watch progress in real-time:
+A persistent 6-line widget bar above the editor shows fleet status in real-time. It is always stable — never changes height or width:
 
 ```
-/fleet          # Toggle fleet dashboard
+╔══════════════════════════════════════════════════════════════╗
+║  CARAVEL FLEET  │  P1/3: Setup  │  ▸ RUN                   ║
+║  [████████░░░░░░░░] 40%  │  2/5 tasks  │  1m 23s            ║
+║  ▸ running: bash → npm install                              ║
+║  0 reviews  │  Elapsed: 1m 23s                              ║
+╚══════════════════════════════════════════════════════════════╝
 ```
 
-The dashboard has two layers:
-- **Widget bar**: Always-visible compact progress bar above the editor (updates every 3 seconds)
-- **Overlay**: Rich detail panel (bottom-right, non-capturing) with tabs for TASKS, AGENTS, REVIEW, TERMINAL
-
-Keyboard shortcuts in the overlay:
-- **Tab / Shift+Tab**: switch panels
-- **Up/Down**: navigate items
-- **Space**: pause/resume fleet
-- **P**: skip current phase
-- **Esc**: close overlay
+Toggle visibility:
+```
+/fleet          # Show/hide the widget bar
+```
 
 ### Control the Fleet
 
@@ -255,7 +254,7 @@ The main agent translates these into `fleet_control` and `review_task` calls beh
 |---------|-------------|
 | `/go` | Auto-run all phases with review between each |
 | `/analyze` | Analyze existing codebase (structure, tech stack, dependencies) |
-| `/fleet` | Toggle the fleet dashboard |
+| `/fleet` | Toggle the fleet widget bar visibility |
 | `fleet_control(action="go")` | Auto-orchestrate fleet from code |
 | `fleet_control(action="pause\|resume\|skip\|next\|reset")` | Manual fleet control |
 | `plan_project(...)` | Define phases and tasks |

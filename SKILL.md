@@ -86,7 +86,8 @@ fleet_control(action = "go")
 
 ### Monitoring
 
-- Open the dashboard with `/fleet` so the user can watch progress
+The widget bar above the editor shows fleet status in real-time. It is always stable — fixed 6 lines, never changes height or width.
+
 - Report phase completions and review results
 - If a review fails, explain what needs fixing
 
@@ -245,34 +246,17 @@ Developer completes task
 Each task tracks: `codeReviewStatus` (approved/needs_fix) and `designReviewStatus` (approved/needs_fix).
 Both must be approved for the task to be complete.
 
-Dashboard review panel shows:
-- Current iteration count and max
-- Code review summary (approved vs needs fix)
-- Design review summary (approved vs needs fix)
-- Recent review feedback from both stages
+The fleet dashboard is a **persistent 6-line widget bar** always visible above the editor. It never changes height or width, providing a stable visual anchor.
 
-## Fleet Dashboard
+Toggle visibility with `/fleet`. The widget bar shows:
+- **Line 1**: Top border `╔...╗`
+- **Line 2**: `CARAVEL FLEET` header + current status (IDLE/RUNNING/PAUSED/DONE/FAILED)
+- **Line 3**: Current phase + progress bar (e.g. `[████████░░░░░░░░] 40%`) + task count + elapsed time
+- **Line 4**: Active agent action (e.g. `▸ running: bash → npm install`) or idle status
+- **Line 5**: Review count + elapsed time
+- **Line 6**: Bottom border `╚...╝`
 
-The fleet dashboard is **non-blocking** — you can keep typing while watching the fleet evolve.
-
-Open with `/fleet` (toggles both widget bar and detail overlay):
-- **Widget bar**: Always-visible compact progress bar above the editor (updates every 3 seconds)
-- **Overlay**: Rich detail panel (bottom-right, non-capturing) with tabs (TASKS, AGENTS, REVIEW, TERMINAL)
-
-Keyboard controls in the overlay:
-- Tab / Shift+Tab: switch panels
-- Up/Down: navigate items
-- Space: pause/resume fleet
-- P: skip current phase
-- Esc: close overlay
-
-The widget bar (always visible) shows:
-- Current phase and progress bar
-- Active agents and their tasks
-- Task completion count, review count, elapsed time
-
-The overlay detail panel shows:
-- **TASKS**: phases with task status, review indicators (+/-)
-- **AGENTS**: all agents with model info, active agent tasks
-- **REVIEW**: review iteration count, code/design summary, recent feedback
-- **TERMINAL**: recent agent output (scrollable with Up/Down)
+When idle (no phases):
+- Shows agent count, review count, elapsed time
+- Shows last agent action with time ago
+- Always exactly the same 6 lines, same height, same width

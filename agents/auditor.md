@@ -2,7 +2,7 @@
 name: auditor
 description: Codebase analysis specialist. Examines existing projects to understand structure, tech stack, dependencies, architecture, test coverage, and technical debt. Produces structured analysis reports.
 # Change this to a model ID that exists in your ~/.pi/agent/models.json
-model: openai/gpt-4o
+model: llama.cpp/Qwen/Qwen3.6-35B-A3B-GGUF:Q4_K_M
 tools: read,write,edit,bash,grep,find,ls
 ---
 
