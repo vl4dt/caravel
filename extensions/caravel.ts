@@ -490,15 +490,15 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
 
   const lines: string[] = [];
 
-  // Helper: pad a line to exactly W visible chars (margin on both sides)
-  const makeLine = (content: string): string => {
+  // Helper: pad a line to exactly W visible chars with box-drawing borders
+  const makeBoxLine = (content: string): string => {
     const cw = visibleWidth(content);
-    const pad = Math.max(0, W - cw);
-    return `${content}${" ".repeat(pad)}`;
+    const pad = Math.max(0, W - 2 - cw); // subtract 2 for ║ borders
+    return `║${content}${" ".repeat(pad)}║`;
   };
 
-  // ─ Border top (simple line, no box-drawing corners) ─
-  lines.push(th.fg("borderMuted", "─".repeat(W)));
+  // ─ Border top (box-drawing corners) ─
+  lines.push(th.fg("borderMuted", `╔${"═".repeat(W - 2)}╗`));
 
   if (fleetState.phases.length === 0) {
     // ─ IDLE STATE ─
@@ -509,7 +509,7 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
     // Title line
     const agentInfo = `${agentCount} agent` + (agentCount !== 1 ? "s" : "") + " configured";
     const titleContent = th.fg("dim", "CARAVEL FLEET") + "  " + th.fg("muted", agentInfo) + "  " + th.fg(statusColor, "STATUS " + statusIcon);
-    lines.push(makeLine(titleContent));
+    lines.push(makeBoxLine(titleContent));
 
     // Agent activity: show BOTH running (if active) and last-executed for history
     if (mainAgent && mainAgent.action !== "idle") {
@@ -518,7 +518,7 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
         const actIcon = mainAgent.status === "thinking" ? "◇" : "▸";
         const maxDetail = Math.max(10, W - 20);
         const truncated = mainAgent.detail.length > maxDetail ? mainAgent.detail.slice(0, maxDetail - 1) + "…" : mainAgent.detail;
-        lines.push(makeLine(`${actIcon} ${th.fg(actColor, `running: ${mainAgent.action}: ${truncated}`)}`));
+        lines.push(makeBoxLine(`${actIcon} ${th.fg(actColor, `running: ${mainAgent.action}: ${truncated}`)}`));
       }
       // Always show last-executed for history
       const timeAgo = now - mainAgent.timestamp;
@@ -527,14 +527,14 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
         : `${Math.round(timeAgo / 3600000)}h ago`;
       const maxDetail = Math.max(10, W - 30);
       const truncated = mainAgent.detail.length > maxDetail ? mainAgent.detail.slice(0, maxDetail - 1) + "…" : mainAgent.detail;
-      lines.push(makeLine(th.fg("muted", `last: ${mainAgent.action} → ${truncated} (${timeStr})`)));
+      lines.push(makeBoxLine(th.fg("muted", `last: ${mainAgent.action} → ${truncated} (${timeStr})`)));
     }
 
     // Info line
-    lines.push(makeLine(th.fg("muted", `● ${fleetState.reviewIterations} reviews  │  ${elapsedStr}`)));
+    lines.push(makeBoxLine(th.fg("muted", `● ${fleetState.reviewIterations} reviews  │  ${elapsedStr}`)));
 
-    // Border bottom (simple line, no box-drawing corners)
-    lines.push(th.fg("borderMuted", "─".repeat(W)));
+    // Border bottom (box-drawing corners)
+    lines.push(th.fg("borderMuted", `╚${"═".repeat(W - 2)}╝`));
     return lines;
   }
 
@@ -552,10 +552,10 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
     : th.fg("muted", "○")
     : th.fg("muted", "○");
   const statusRight = statusIcon + th.fg("muted", ` ${progress}%`);
-  lines.push(makeLine(phaseInfo + "  " + statusRight));
+  lines.push(makeBoxLine(phaseInfo + "  " + statusRight));
 
   // Progress bar line
-  lines.push(makeLine(th.fg("accent", `[${bar}] ${progress}%`)));
+  lines.push(makeBoxLine(th.fg("accent", `[${bar}] ${progress}%`)));
 
   // Agent activity: show BOTH running (if active) and last-executed for history
   if (mainAgent && mainAgent.action !== "idle") {
@@ -564,7 +564,7 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
       const actIcon = mainAgent.status === "thinking" ? "◇" : "▸";
       const maxDetail = Math.max(10, W - 20);
       const truncated = mainAgent.detail.length > maxDetail ? mainAgent.detail.slice(0, maxDetail - 1) + "…" : mainAgent.detail;
-      lines.push(makeLine(`${actIcon} ${th.fg(actColor, `running: ${mainAgent.action}: ${truncated}`)}`));
+      lines.push(makeBoxLine(`${actIcon} ${th.fg(actColor, `running: ${mainAgent.action}: ${truncated}`)}`));
     }
     // Always show last-executed for history
     const timeAgo = now - mainAgent.timestamp;
@@ -573,7 +573,7 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
       : `${Math.round(timeAgo / 3600000)}h ago`;
     const maxDetail = Math.max(10, W - 30);
     const truncated = mainAgent.detail.length > maxDetail ? mainAgent.detail.slice(0, maxDetail - 1) + "…" : mainAgent.detail;
-    lines.push(makeLine(th.fg("muted", `last: ${mainAgent.action} → ${truncated} (${timeStr})`)));
+    lines.push(makeBoxLine(th.fg("muted", `last: ${mainAgent.action} → ${truncated} (${timeStr})`)));
   }
 
   // Fleet agent lines
@@ -585,9 +585,9 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
       const task = a.currentTask ? ` ${truncate(a.currentTask, 20)}` : "";
       return th.fg(color, `${icon} ${a.name}${task}`);
     });
-    lines.push(makeLine(`  ${agentLines.join(`  │  `)}`));
+    lines.push(makeBoxLine(`  ${agentLines.join(`  │  `)}`));
   } else {
-    lines.push(makeLine(th.fg("dim", `${completedTasks}/${totalTasks} tasks`)));
+    lines.push(makeBoxLine(th.fg("dim", `${completedTasks}/${totalTasks} tasks`)));
   }
 
   // Summary line
@@ -597,10 +597,10 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
     elapsedStr,
   ];
   if (fleetState.paused) summaryParts.push(th.fg("warning", "PAUSED"));
-  lines.push(makeLine(th.fg("dim", summaryParts.join("  │  "))));
+  lines.push(makeBoxLine(th.fg("dim", summaryParts.join("  │  "))));
 
-  // Border bottom (simple line, no box-drawing corners)
-  lines.push(th.fg("borderMuted", "─".repeat(W)));
+  // Border bottom (box-drawing corners)
+  lines.push(th.fg("borderMuted", `╚${"═".repeat(W - 2)}╝`));
 
   return lines;
 }
