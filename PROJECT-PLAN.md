@@ -17,7 +17,7 @@
 - [○] **T1**: Create zellij-layout.kdl — a fleet workspace layout with main orchestrator pane, per-agent panes (max 3 visible), and a 
   - **Agent**: developer
   - **Review**: code + design
-- [○] **T2**: Create extensions/zellij-fleet.ts — the Zellij process manager. Key responsibilities: (1) Generate and launch Zellij ses
+- [○] **T2**: Inline ZFS process manager into caravel.ts — session lifecycle, pane spawning, signal management, cross-platform shell detection, and background process fallback
   - **Agent**: developer
   - **Review**: code + design
 - [○] **T3**: Create skills/zellij-fleet.md — the skill documentation describing how users interact with Zellij fleet mode. Include: s
@@ -39,7 +39,7 @@
 - [○] **T3**: Add new Pi commands: /zellij-start (launch fleet in Zellij), /zellij-stop (shutdown Zellij session), /zellij-follow (fol
   - **Agent**: developer
   - **Review**: code + design
-- [○] **T4**: Add the Zellij fleet orchestrator tool `zellij_fleet` — a single tool that replaces multiple individual agent spawns wit
+- [○] **T4**: Register all ZFS commands and tools in caravel.ts — /zellij-start, /zellij-stop, /zellij-panes, /zellij-follow, /zellij-status, /zfs-pause, /zfs-resume, /zfs-skip-agent, /zfs-list-panes, /zfs-fleet-state, /zfs-status-bar-toggle, /zfs-status-bar-update, /zfs-layout
   - **Agent**: developer
   - **Review**: code + design
 
@@ -67,7 +67,7 @@
 
 ## ZFS Status Bar — Implementation Notes
 
-The ZFS status bar (Phase 2, Task 2) is implemented in `extensions/zfs_status_bar.ts`:
+The ZFS status bar (Phase 2, Task 2) is inlined in `caravel.ts` (~870 lines):
 
 - **10-line floating pane** showing agent statuses, phase progress, token usage
 - **Auto-refreshes** every 2 seconds when ZFS mode is active

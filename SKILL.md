@@ -44,7 +44,7 @@ analyze   →  /analyze  →  ANALYSIS.md  →  /plan  →  PLAN.md  →  /go  �
 2. **Start ZFS**: `/zellij-start` — creates session, panes, floating status bar
 3. **Describe** your project in the orchestrator pane
 4. **Monitor** panes in real-time: `/zellij-follow <agent>`, `/zfs-list-panes`
-5. **Control** the fleet: `/zfs-pause`, `/zfs-resume`, `--agent-name/`
+5. **Control** the fleet: `/zfs-pause`, `/zfs-resume`, `/zfs-skip-agent <name>`
 6. **Detach** during long runs: `Ctrl+Shift+d` in ZFS, resume later with `/zellij-panes`
 
 ## Key Files
@@ -389,7 +389,7 @@ Switch during execution: `zellij action switch-layout <name>`
 /zfs-status-bar-update  # Force refresh
 /zfs-pause          # Pause all panes (SIGSTOP)
 /zfs-resume         # Resume all panes (SIGCONT)
---agent-name/ --agent-name <name>  # Skip agent
+/zfs-skip-agent developer  # Skip agent
 ```
 
 > **No ZFS installed?** Fleet falls back to background processes automatically.

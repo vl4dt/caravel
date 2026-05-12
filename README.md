@@ -63,19 +63,16 @@ Switch layouts during execution: `zellij action switch-layout <name>`
 | `Ctrl+s` | Save layout |
 | `Ctrl+Shift+d` | Detach (leave running) |
 
-### ZFS Commands
+### ZFS Commands (full list in [Commands section](#commands))
 
-| Command | Description |
-|---------|-------------|
-| `/zellij-start` | Launch fleet in ZFS |
-| `/zellij-stop` | Shutdown ZFS session |
-| `/zellij-panes` | List all panes with status |
-| `/zellij-follow [agent]` | Follow agent output (list/switch/none) |
-| `/zellij-status` | Fleet overview dashboard |
-| `/zfs-pause` | Pause all panes (SIGSTOP) |
-| `/zfs-resume` | Resume all panes (SIGCONT) |
-| `/zfs-skip-agent <name>` | Skip a specific agent |
-| `/zfs-fleet-state` | ZFS health check |
+| Category | Command |
+|----------|---------|
+| Start/Stop | `/zellij-start` · `/zellij-stop` |
+| Panes | `/zellij-panes` · `/zfs-list-panes` |
+| Follow | `/zellij-follow [agent]` |
+| Status | `/zellij-status` · `/zfs-fleet-state` · `/zfs-status-bar-toggle` |
+| Control | `/zfs-pause` · `/zfs-resume` · `/zfs-skip-agent <name>` |
+| Layout | `/zfs-layout` · `/zfs-status-bar-update` |
 
 > **No ZFS?** Fleet falls back to background processes automatically.
 
@@ -496,9 +493,7 @@ caravel/
 │   ├── models-ollama.json
 │   └── models-docker.json
 ├── extensions/
-│   ├── caravel.ts        # Main orchestrator (fleet tools, dashboard, ZFS bridge)
-│   ├── zellij-fleet.ts   # ZFS process manager (sessions, panes, signals)
-│   └── zfs_status_bar.ts # Floating status bar (agent grid, phase info, tokens)
+│   └── caravel.ts        # Main orchestrator (fleet tools, dashboard, ZFS — all inlined)
 ├── agents/
 │   ├── developer.md      # Developer agent (configurable model)
 │   ├── tech-lead.md      # Tech lead agent (configurable model)
@@ -517,12 +512,11 @@ caravel/
     └── task-brief.md     # Task brief template
 ```
 
-### ZFS Extension Files
+### ZFS Files
 
 | File | Lines | Purpose |
 |------|-------|--------|
-| `extensions/zellij-fleet.ts` | 1,700+ | ZFS process manager — session lifecycle, pane spawning, signal management, cross-platform shell detection |
-| `extensions/zfs_status_bar.ts` | 665 | Floating status bar — 10-line agent grid, phase progress, token tracking, auto-refresh every 2s |
+| `extensions/caravel.ts` | ~5,000 | Main orchestrator — includes inlined ZFS process manager (980 lines) and status bar (870 lines) |
 | `zellij-layout.kdl` | 240 | Fleet workspace layout — default (60/40), minimal, review, wide variants |
 | `zellij-fleet-config.md` | 280 | Configuration guide — installation, keybindings, multi-monitor, troubleshooting |
 | `skills/zellij-fleet.md` | 734 | User documentation — workflows, keyboard shortcuts, layout variants, troubleshooting |

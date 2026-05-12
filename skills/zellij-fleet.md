@@ -726,7 +726,7 @@ Toggle with `<leader>+w`. The floating pane may also be hidden behind another pa
 
 ## Architecture Notes
 
-- **Session name**: `caravel` (hardcoded in `zellij-fleet.ts`)
+- **Session name**: `caravel` (defined in `caravel.ts`)
 - **Layout file**: `zellij-layout.kdl` in the project root
 - **Pane ID format**: `caravel-pid-<agent-name>-<timestamp>`
 - **Cross-platform**: The ZFS extension handles Windows/macOS/Linux differences in shell detection and process management
