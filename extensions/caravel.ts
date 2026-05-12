@@ -459,7 +459,7 @@ async function runSubagent(
 
 /**
  * Build rich multi-line content for the widget bar.
- * Left-bordered, no ragged right edge — fills to consistent width.
+ * Left-bordered, simple horizontal lines (no box-drawing corners or right border).
  */
 function buildWidgetLines(ctx: ExtensionContext): string[] {
   const th = ctx.ui.theme;
@@ -484,21 +484,21 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
   const mainAgent = fleetState.mainAgentActivity;
   const isMainAgentActive = mainAgent?.status === "executing" || mainAgent?.status === "thinking";
 
-  // Dynamic content width: fill full terminal width minus left border "│ " and right border "│"
+  // Content width: use terminal width minus a small margin for the left border
   const termWidth = process.stdout.columns || 120;
-  const W = Math.max(30, termWidth - 2); // leave 2 chars for left/right borders
+  const W = Math.max(30, termWidth - 2); // leave 1 char on each side
 
   const lines: string[] = [];
 
-  // Helper: pad a line to exactly W visible chars, appending a right border
+  // Helper: pad a line to exactly W visible chars (margin on both sides)
   const makeLine = (content: string): string => {
     const cw = visibleWidth(content);
     const pad = Math.max(0, W - cw);
-    return `│ ${content}${" ".repeat(pad)}`;
+    return `${content}${" ".repeat(pad)}`;
   };
 
-  // ─ Border top ─
-  lines.push(th.fg("borderMuted", "┌" + "─".repeat(W) + "┐"));
+  // ─ Border top (simple line, no box-drawing corners) ─
+  lines.push(th.fg("borderMuted", "─".repeat(W)));
 
   if (fleetState.phases.length === 0) {
     // ─ IDLE STATE ─
@@ -510,18 +510,21 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
     const agentInfo = `${agentCount} agent` + (agentCount !== 1 ? "s" : "") + " configured";
     const titleContent = th.fg("dim", "CARAVEL FLEET") + "  " + th.fg("muted", agentInfo) + "  " + th.fg(statusColor, "STATUS " + statusIcon);
     lines.push(makeLine(titleContent));
-    lines.push("│" + " ".repeat(W)); // blank spacer
 
-    // Main agent activity line — truncate detail to fit
-    if (isMainAgentActive && mainAgent) {
-      const actColor = mainAgent.status === "thinking" ? "dim" : "accent";
-      const actIcon = mainAgent.status === "thinking" ? "◇" : "▸";
-      const maxDetail = Math.max(10, W - 20);
-      const truncated = mainAgent.detail.length > maxDetail ? mainAgent.detail.slice(0, maxDetail - 1) + "…" : mainAgent.detail;
-      lines.push(makeLine(`${actIcon} ${th.fg(actColor, `${mainAgent.action}: ${truncated}`)}`));
-    } else if (mainAgent && mainAgent.action !== "idle") {
+    // Agent activity: show BOTH running (if active) and last-executed for history
+    if (mainAgent && mainAgent.action !== "idle") {
+      if (isMainAgentActive && mainAgent) {
+        const actColor = mainAgent.status === "thinking" ? "dim" : "accent";
+        const actIcon = mainAgent.status === "thinking" ? "◇" : "▸";
+        const maxDetail = Math.max(10, W - 20);
+        const truncated = mainAgent.detail.length > maxDetail ? mainAgent.detail.slice(0, maxDetail - 1) + "…" : mainAgent.detail;
+        lines.push(makeLine(`${actIcon} ${th.fg(actColor, `running: ${mainAgent.action}: ${truncated}`)}`));
+      }
+      // Always show last-executed for history
       const timeAgo = now - mainAgent.timestamp;
-      const timeStr = timeAgo < 60000 ? `${Math.round(timeAgo / 1000)}s ago` : timeAgo < 3600000 ? `${Math.round(timeAgo / 60000)}m ago` : `${Math.round(timeAgo / 3600000)}h ago`;
+      const timeStr = timeAgo < 60000 ? `${Math.round(timeAgo / 1000)}s ago`
+        : timeAgo < 3600000 ? `${Math.round(timeAgo / 60000)}m ago`
+        : `${Math.round(timeAgo / 3600000)}h ago`;
       const maxDetail = Math.max(10, W - 30);
       const truncated = mainAgent.detail.length > maxDetail ? mainAgent.detail.slice(0, maxDetail - 1) + "…" : mainAgent.detail;
       lines.push(makeLine(th.fg("muted", `last: ${mainAgent.action} → ${truncated} (${timeStr})`)));
@@ -530,8 +533,8 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
     // Info line
     lines.push(makeLine(th.fg("muted", `● ${fleetState.reviewIterations} reviews  │  ${elapsedStr}`)));
 
-    // Border bottom
-    lines.push(th.fg("borderMuted", "└" + "─".repeat(W) + "┘"));
+    // Border bottom (simple line, no box-drawing corners)
+    lines.push(th.fg("borderMuted", "─".repeat(W)));
     return lines;
   }
 
@@ -554,13 +557,23 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
   // Progress bar line
   lines.push(makeLine(th.fg("accent", `[${bar}] ${progress}%`)));
 
-  // Main agent activity line (if active) — truncate detail to fit
-  if (isMainAgentActive && mainAgent) {
-    const actColor = mainAgent.status === "thinking" ? "dim" : "accent";
-    const actIcon = mainAgent.status === "thinking" ? "◇" : "▸";
-    const maxDetail = Math.max(10, W - 20);
+  // Agent activity: show BOTH running (if active) and last-executed for history
+  if (mainAgent && mainAgent.action !== "idle") {
+    if (isMainAgentActive && mainAgent) {
+      const actColor = mainAgent.status === "thinking" ? "dim" : "accent";
+      const actIcon = mainAgent.status === "thinking" ? "◇" : "▸";
+      const maxDetail = Math.max(10, W - 20);
+      const truncated = mainAgent.detail.length > maxDetail ? mainAgent.detail.slice(0, maxDetail - 1) + "…" : mainAgent.detail;
+      lines.push(makeLine(`${actIcon} ${th.fg(actColor, `running: ${mainAgent.action}: ${truncated}`)}`));
+    }
+    // Always show last-executed for history
+    const timeAgo = now - mainAgent.timestamp;
+    const timeStr = timeAgo < 60000 ? `${Math.round(timeAgo / 1000)}s ago`
+      : timeAgo < 3600000 ? `${Math.round(timeAgo / 60000)}m ago`
+      : `${Math.round(timeAgo / 3600000)}h ago`;
+    const maxDetail = Math.max(10, W - 30);
     const truncated = mainAgent.detail.length > maxDetail ? mainAgent.detail.slice(0, maxDetail - 1) + "…" : mainAgent.detail;
-    lines.push(makeLine(`${actIcon} ${th.fg(actColor, `${mainAgent.action}: ${truncated}`)}`));
+    lines.push(makeLine(th.fg("muted", `last: ${mainAgent.action} → ${truncated} (${timeStr})`)));
   }
 
   // Fleet agent lines
@@ -586,8 +599,8 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
   if (fleetState.paused) summaryParts.push(th.fg("warning", "PAUSED"));
   lines.push(makeLine(th.fg("dim", summaryParts.join("  │  "))));
 
-  // Border bottom
-  lines.push(th.fg("borderMuted", "└" + "─".repeat(W) + "┘"));
+  // Border bottom (simple line, no box-drawing corners)
+  lines.push(th.fg("borderMuted", "─".repeat(W)));
 
   return lines;
 }
