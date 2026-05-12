@@ -5025,4 +5025,129 @@ Status: idle | Reviews: ${fleetState.reviewIterations} | Elapsed: ${formatDurati
       };
     },
   });
+
+  // ---- /zfs_fleet_state: ZFS health check ----
+  pi.registerCommand("zfs-fleet-state", {
+    description: "Get the current fleet state: ZFS availability, pane counts, session info, platform.",
+    handler: async (_args, ctx) => {
+      const zfs = ensureZFS();
+      const state = zfs.getFleetState();
+      return {
+        content: [{ type: "text", text:
+`ZFS Fleet State:\n` +
+`  Zellij: ${state.zellijAvailable ? "✓ available" : "✗ unavailable"}\n` +
+`  Session: ${state.sessionName}\n` +
+`  Paused: ${state.paused}\n` +
+`  Active panes: ${state.activePanes}\n` +
+`  Exited panes: ${state.exitedPanes}\n` +
+`  Active processes: ${state.activeProcesses}\n` +
+`  Platform: ${state.platform.platform} (${state.platform.shell})`}],
+      };
+    },
+  });
+
+  // ---- /zfs_pause: Pause all panes ----
+  pi.registerCommand("zfs-pause", {
+    description: "Pause all running panes (SIGSTOP / Windows equivalent).",
+    handler: async (_args, ctx) => {
+      const zfs = ensureZFS();
+      const result = await zfs.pauseAll();
+      return {
+        content: [{ type: "text", text: result ? "All panes paused." : "Failed to pause panes." }],
+      };
+    },
+  });
+
+  // ---- /zfs_resume: Resume all panes ----
+  pi.registerCommand("zfs-resume", {
+    description: "Resume all paused panes (SIGCONT).",
+    handler: async (_args, ctx) => {
+      const zfs = ensureZFS();
+      const result = await zfs.resumeAll();
+      return {
+        content: [{ type: "text", text: result ? "All panes resumed." : "Failed to resume panes." }],
+      };
+    },
+  });
+
+  // ---- /zfs_skip_agent: Skip a specific agent ----
+  pi.registerCommand("zfs-skip-agent", {
+    description: 'Skip (terminate) a specific agent\'s pane. Usage: /zfs-skip-agent developer',
+    handler: async (args, ctx) => {
+      const zfs = ensureZFS();
+      const agentName = args?.trim() || "";
+      if (!agentName) {
+        return { content: [{ type: "text", text: "Usage: /zfs-skip-agent <agent_name>" }] };
+      }
+      const result = zfs.skipPane(agentName);
+      return {
+        content: [{ type: "text", text: result
+          ? `Agent "${agentName}" skipped — pane terminated.`
+          : `Agent "${agentName}" not found running.` }],
+      };
+    },
+  });
+
+  // ---- /zfs_list_panes: List all panes ----
+  pi.registerCommand("zfs-list-panes", {
+    description: "List all active and exited panes in the fleet session.",
+    handler: async (_args, ctx) => {
+      const zfs = ensureZFS();
+      const panes = zfs.listPanes();
+      const lines = panes.map((p) =>
+        `  ${p.running ? "▸" : "✗"} ${p.name} (${p.paneId}) ${p.running ? "[running]" : `[exited:${p.exitCode ?? "?"}]`}`,
+      );
+      return {
+        content: [{ type: "text", text: lines.length > 0 ? `Active panes:\n${lines.join("\n")}` : "No panes registered." }],
+      };
+    },
+  });
+
+  // ---- /zfs_status_bar_update: Force refresh status bar ----
+  pi.registerCommand("zfs-status-bar-update", {
+    description: "Force an immediate update of the floating pane status bar.",
+    handler: async (_args, ctx) => {
+      const zfs = ensureZFS();
+      if (!zfs.getFleetState().zellijAvailable) {
+        return { content: [{ type: "text", text: "ZFS not available. Status bar cannot be updated." }] };
+      }
+      zfs.refreshStatusBar();
+      return { content: [{ type: "text", text: "Status bar updated." }] };
+    },
+  });
+
+  // ---- /zfs_status_bar_toggle: Toggle status bar ----
+  pi.registerCommand("zfs-status-bar-toggle", {
+    description: "Toggle the floating pane status bar on/off.",
+    handler: async (_args, ctx) => {
+      const zfs = ensureZFS();
+      const info = zfs.getStatusBarInfo();
+      if (!info.available) {
+        return { content: [{ type: "text", text: "ZFS not available — status bar requires Zellij." }] };
+      }
+      if (info.active) {
+        zfs.destroyStatusBar();
+        return { content: [{ type: "text", text: "Status bar disabled." }] };
+      } else {
+        zfs.initStatusBar();
+        zfs.refreshStatusBar();
+        return { content: [{ type: "text", text: "Status bar enabled." }] };
+      }
+    },
+  });
+
+  // ---- /zfs-layout: Preview/generate fleet layout ----
+  pi.registerCommand("zfs-layout", {
+    description: "Preview or generate the fleet Zellij layout configuration. Pass --preview to see the KDL output, or pass agent names to generate.",
+    handler: async (args, ctx) => {
+      const zfs = ensureZFS();
+      const allAgents = discoverAgents("both");
+      const kdl = generateFleetLayout(allAgents.map(a => ({ name: a.name, description: a.description })));
+      const kdlPath = path.join(ctx.cwd, "zellij-layout.kdl");
+      fs.writeFileSync(kdlPath, kdl, "utf-8");
+      return {
+        content: [{ type: "text", text: `Fleet layout saved to: ${kdlPath}\n\n${kdl}` }],
+      };
+    },
+  });
 }

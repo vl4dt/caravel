@@ -72,10 +72,10 @@ Switch layouts during execution: `zellij action switch-layout <name>`
 | `/zellij-panes` | List all panes with status |
 | `/zellij-follow [agent]` | Follow agent output (list/switch/none) |
 | `/zellij-status` | Fleet overview dashboard |
-| `/zfs_pause` | Pause all panes (SIGSTOP) |
-| `/zfs_resume` | Resume all panes (SIGCONT) |
-| `/zfs_skip_agent --agent-name <name>` | Skip a specific agent |
-| `/zfs_fleet_state` | ZFS health check |
+| `/zfs-pause` | Pause all panes (SIGSTOP) |
+| `/zfs-resume` | Resume all panes (SIGCONT) |
+| `/zfs-skip-agent <name>` | Skip a specific agent |
+| `/zfs-fleet-state` | ZFS health check |
 
 > **No ZFS?** Fleet falls back to background processes automatically.
 
@@ -454,12 +454,14 @@ These are for advanced use — you can invoke them from the agent if needed, but
 | `/zellij-panes` | List all panes with status, IDs, and fleet state |
 | `/zellij-follow [agent]` | Follow agent output — use `list`, `switch`, `none` too |
 | `/zellij-status` | Comprehensive fleet overview dashboard |
-| `/zfs_pause` | Pause all running panes (SIGSTOP) |
-| `/zfs_resume` | Resume all paused panes (SIGCONT) |
-| `/zfs_skip_agent --agent-name <name>` | Skip/terminate a specific agent's pane |
-| `/zfs_fleet_state` | ZFS health check (ZFS availability, panes, processes) |
-| `/zfs_list_panes` | List all active and exited panes |
-| `/zfs_layout --agents [...] --preview true` | Preview/generate fleet layout |
+| `/zfs-pause` | Pause all running panes (SIGSTOP) |
+| `/zfs-resume` | Resume all paused panes (SIGCONT) |
+| `/zfs-skip-agent <name>` | Skip/terminate a specific agent's pane |
+| `/zfs-fleet-state` | ZFS health check (ZFS availability, panes, processes) |
+| `/zfs-list-panes` | List all active and exited panes |
+| `/zfs-status-bar-toggle` | Toggle the floating status bar on/off |
+| `/zfs-status-bar-update` | Force refresh the floating status bar |
+| `/zfs-layout --agents [...] --preview true` | Preview/generate fleet layout |
 
 ### Workflow: Taking Over an Existing Codebase
 
@@ -662,7 +664,7 @@ brew install zellij              # macOS
 
 ```bash
 # List all panes with status
-/zfs_list_panes
+/zfs-list-panes
 
 # Follow a specific agent's live output
 /zellij-follow developer
@@ -671,7 +673,7 @@ brew install zellij              # macOS
 /zellij-status
 
 # Check ZFS health
-/zfs_fleet_state
+/zfs-fleet-state
 
 # Change layout during execution
 zellij action switch-layout minimal   # Focused coding
@@ -687,14 +689,14 @@ zellij action switch-layout wide      # Side-by-side
 
 # ── Execute ──
 plan_project(...)                 # Define phases
-/zfs_list_panes                   # Verify panes are running
+/zfs-list-panes                   # Verify panes are running
 run_phase(phaseIndex=0)           # Agent works in dedicated pane
 
 # ── Monitor ──
 /zellij-follow developer          # Watch live output
-/zfs_status_bar_update            # Force refresh status bar
-/zfs_pause                        # Pause all agents (SIGSTOP)
-/zfs_resume                       # Resume all agents (SIGCONT)
+/zfs-status-bar-update            # Force refresh status bar
+/zfs-pause                        # Pause all agents (SIGSTOP)
+/zfs-resume                       # Resume all agents (SIGCONT)
 
 # ── Review ──
 zellij action switch-layout review  # Switch to review layout

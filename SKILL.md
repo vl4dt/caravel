@@ -43,8 +43,8 @@ analyze   →  /analyze  →  ANALYSIS.md  →  /plan  →  PLAN.md  →  /go  �
 1. **Install Zellij** (once): `brew install zellij` / `winget install Zellij.Zellij`
 2. **Start ZFS**: `/zellij-start` — creates session, panes, floating status bar
 3. **Describe** your project in the orchestrator pane
-4. **Monitor** panes in real-time: `/zellij-follow <agent>`, `/zfs_list_panes`
-5. **Control** the fleet: `/zfs_pause`, `/zfs_resume`, `/zfs_skip_agent`
+4. **Monitor** panes in real-time: `/zellij-follow <agent>`, `/zfs-list-panes`
+5. **Control** the fleet: `/zfs-pause`, `/zfs-resume`, `--agent-name/`
 6. **Detach** during long runs: `Ctrl+Shift+d` in ZFS, resume later with `/zellij-panes`
 
 ## Key Files
@@ -384,12 +384,12 @@ Switch during execution: `zellij action switch-layout <name>`
 ### ZFS Monitoring
 
 ```bash
-/zfs_fleet_state    # ZFS health check
-/zfs_list_panes     # List all panes
-/zfs_status_bar_update  # Force refresh
-/zfs_pause          # Pause all panes (SIGSTOP)
-/zfs_resume         # Resume all panes (SIGCONT)
-/zfs_skip_agent --agent-name <name>  # Skip agent
+/zfs-fleet-state    # ZFS health check
+/zfs-list-panes     # List all panes
+/zfs-status-bar-update  # Force refresh
+/zfs-pause          # Pause all panes (SIGSTOP)
+/zfs-resume         # Resume all panes (SIGCONT)
+--agent-name/ --agent-name <name>  # Skip agent
 ```
 
 > **No ZFS installed?** Fleet falls back to background processes automatically.
