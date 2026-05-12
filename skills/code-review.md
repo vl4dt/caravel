@@ -37,6 +37,62 @@ description: Structured code review skill for the tech-lead agent. Use when revi
 - [ ] Tests cover happy path and edge cases
 - [ ] Test naming is clear and descriptive
 
+## Progress Feedback
+
+During execution, emit structured progress messages for each review category so the user always sees what's happening:
+
+**Start — beginning the review:**
+```
+🧐 Review: Authentication service implementation
+  Category: all
+  Status: in-progress
+  Detail: Checking correctness, security, performance, maintainability...
+```
+
+**Each category as it's reviewed:**
+```
+🧐 Review: Authentication service — correctness
+  Category: correctness
+  Status: complete
+  Result: All edge cases covered, error handling verified
+```
+
+```
+🧐 Review: Authentication service — security
+  Category: security
+  Status: complete
+  Result: 2 issues — missing rate limiting (important), token expiry OK (ok)
+```
+
+**Final output:**
+
+```
+🧐 Review: Authentication service — complete
+  Category: all
+  Status: complete
+  Result: APPROVED
+  Issues: 0 critical, 2 important, 0 nice-to-have
+  Summary: Good implementation. Address rate limiting before merge.
+```
+
+```
+🧐 Review: Authentication service — needs revision
+  Category: all
+  Status: complete
+  Result: NEEDS_REVISION
+  Critical issues: 1 — missing input validation on login endpoint
+  Action: Developer must fix critical issues before resubmit
+```
+
+```
+🧐 Review: Authentication service — critical
+  Category: all
+  Status: complete
+  Result: CRITICAL
+  Critical issues: 2 — SQL injection in user lookup, no CSRF protection
+  Action: Block — developer must address both before any merge
+```
+
 ## Review Output Format
 
 ```

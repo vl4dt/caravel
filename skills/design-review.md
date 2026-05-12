@@ -37,6 +37,62 @@ description: Visual design review skill for the designer agent. Use when reviewi
 - [ ] Animations/transitions are smooth (where applicable)
 - [ ] Edge cases handled (empty states, loading states, error states)
 
+## Progress Feedback
+
+During execution, emit structured progress messages for each review category so the user always sees what's happening:
+
+**Start — beginning the review:**
+```
+🧐 Review: Login page implementation
+  Category: all
+  Status: in-progress
+  Detail: Checking layout, visual consistency, accessibility, UX, polish...
+```
+
+**Each category as it's reviewed:**
+```
+🧐 Review: Login page — layout & structure
+  Category: layout & structure
+  Status: complete
+  Result: Grid-aligned, consistent spacing, clear hierarchy
+```
+
+```
+🧐 Review: Login page — accessibility
+  Category: accessibility
+  Status: complete
+  Result: 1 issue — color contrast on secondary text fails WCAG AA
+```
+
+**Final output:**
+
+```
+🧐 Review: Login page — complete
+  Category: all
+  Status: complete
+  Result: APPROVED
+  Issues: 0 critical, 1 important, 3 polish
+  Summary: Solid design. Fix contrast on secondary text for WCAG compliance.
+```
+
+```
+🧐 Review: Login page — needs revision
+  Category: all
+  Status: complete
+  Result: NEEDS_REVISION
+  Critical issues: 1 — touch targets on icon buttons below 44px minimum
+  Action: Developer must increase touch target sizes before merge
+```
+
+```
+🧐 Review: Login page — critical
+  Category: all
+  Status: complete
+  Result: CRITICAL
+  Critical issues: 2 — zero contrast ratio on primary CTA, no focus states on interactive elements
+  Action: Block — both accessibility violations must be fixed before any merge
+```
+
 ## Review Output Format
 
 ```

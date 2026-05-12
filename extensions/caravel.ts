@@ -1770,6 +1770,186 @@ async function runAnalysisPhase(ctx: ExtensionContext, onUpdate?: (content: Arra
 }
 
 // ============================================================================
+// Artifact generation: PROJECT-DESIGN.md and PROJECT-PLAN.md
+// ============================================================================
+
+/**
+ * Generate PROJECT-DESIGN.md from analysis results.
+ * Called after /analyze completes. Contains architecture, tech stack, design patterns.
+ */
+function generateDesignDocument(result: AnalysisResult, ctx: ExtensionContext): string {
+  const pf = result.preFlight;
+  const now = new Date().toISOString().split("T")[0];
+  const lines: string[] = [];
+
+  lines.push(`# ${getProjectName(ctx.cwd)} — Design Document`);
+  lines.push("");
+  lines.push("> Generated: ${now} from codebase analysis");
+  lines.push("> Source: " + result.agent.name + " agent (model: " + (result.agent.model || "unknown") + ")");
+  lines.push("> Scope: architecture, tech stack, design patterns, structural analysis");
+  lines.push("");
+  lines.push("---");
+  lines.push("");
+
+  // --- Architecture ---
+  lines.push("## Architecture");
+  lines.push("");
+  lines.push(result.output ? extractSection(result.output, "Architecture") : "Architecture details available in ANALYSIS.md");
+  lines.push("");
+
+  // --- Tech Stack ---
+  lines.push("## Tech Stack");
+  lines.push("");
+  if (pf.languages.length > 0) lines.push(`- **Languages**: ${pf.languages.join(", ")}`);
+  if (pf.frameworks.length > 0) lines.push(`- **Frameworks**: ${pf.frameworks.join(", ")}`);
+  if (pf.buildTools.length > 0) lines.push(`- **Build Tools**: ${pf.buildTools.join(", ")}`);
+  if (pf.techStack.length > 0) lines.push(`- **Stack Items**: ${pf.techStack.join(", ")}`);
+  lines.push("");
+
+  // --- Structure ---
+  lines.push("## Project Structure");
+  lines.push("");
+  lines.push(`- **Total Files**: ${pf.totalFiles.toLocaleString()}`);
+  lines.push(`- **Total Directories**: ${pf.totalDirs.toLocaleString()}`);
+  if (pf.configFileCount > 0) lines.push(`- **Config Files**: ${pf.configFileCount.toLocaleString()}`);
+  lines.push(`- **Test Infrastructure**: ${pf.hasTests ? "✓ Detected" : "✗ Not detected"}`);
+  lines.push(`- **CI/CD Pipeline**: ${pf.hasCI ? "✓ Detected" : "✗ Not detected"}`);
+  lines.push("");
+
+  // --- Entry Points ---
+  if (pf.entryPoints.length > 0) {
+    lines.push("## Entry Points");
+    lines.push("");
+    pf.entryPoints.slice(0, 20).forEach((ep) => lines.push(`- \`${ep}\``));
+    if (pf.entryPoints.length > 20) lines.push(`- ... and ${pf.entryPoints.length - 20} more`);
+    lines.push("");
+  }
+
+  // --- Design Patterns (from analysis) ---
+  const patterns = extractSection(result.output, "Design Patterns");
+  if (patterns && patterns.trim()) {
+    lines.push("## Design Patterns");
+    lines.push("");
+    lines.push(patterns.trim());
+    lines.push("");
+  }
+
+  // --- Recommendations ---
+  const recs = extractSection(result.output, "Recommendations");
+  if (recs && recs.trim()) {
+    lines.push("## Design Recommendations");
+    lines.push("");
+    lines.push(recs.trim());
+    lines.push("");
+  }
+
+  // --- Footer ---
+  lines.push("---");
+  lines.push("");
+  lines.push(`> Full analysis report: [ANALYSIS.md](./ANALYSIS.md)`);
+  lines.push(`> Implementation plan: [PROJECT-PLAN.md](./PROJECT-PLAN.md)`);
+  lines.push("");
+
+  return lines.join("\n");
+}
+
+/**
+ * Generate PROJECT-PLAN.md from planning results.
+ * Called after plan_project() completes. Contains phases, tasks, and roadmap.
+ */
+function generatePlanDocument(
+  planName: string,
+  phases: FleetPhase[],
+  ctx: ExtensionContext,
+): string {
+  const now = new Date().toISOString().split("T")[0];
+  const lines: string[] = [];
+
+  lines.push(`# ${planName} — Project Plan`);
+  lines.push("");
+  lines.push(`> Generated: ${now} from project planning phase`);
+  lines.push(`> Phases: ${phases.length}`);
+  lines.push(`> Total Tasks: ${phases.reduce((s, p) => s + p.tasks.length, 0)}`);
+  lines.push("");
+  lines.push("---");
+  lines.push("");
+
+  lines.push("## Phases");
+  lines.push("");
+
+  phases.forEach((phase, i) => {
+    const statusIcon = phase.status === "complete" ? "✅" : phase.status === "failed" ? "❌" : "⏳";
+    lines.push(`### ${statusIcon} Phase ${i + 1}: ${phase.name}`);
+    lines.push("");
+    lines.push(`**Status**: ${phase.status}`);
+    lines.push("");
+    lines.push("#### Tasks");
+    lines.push("");
+
+    phase.tasks.forEach((task, j) => {
+      const taskIcon = task.status === "complete" ? "✅" : task.status === "failed" ? "❌" : task.status === "needs_fix" ? "🔧" : "○";
+      lines.push(`- [${taskIcon}] **T${j + 1}**: ${task.description.slice(0, 120)}`);
+      lines.push(`  - **Agent**: ${task.agentName}`);
+      lines.push(`  - **Review**: code + design`);
+    });
+
+    lines.push("");
+  });
+
+  // --- Summary ---
+  const completed = phases.flatMap((p) => p.tasks.filter((t) => t.status === "complete")).length;
+  const failed = phases.flatMap((p) => p.tasks.filter((t) => t.status === "failed")).length;
+  lines.push("## Summary");
+  lines.push("");
+  lines.push(`- **Completed**: ${completed} tasks`);
+  lines.push(`- **Failed**: ${failed} tasks`);
+  lines.push(`- **Remaining**: ${phases.reduce((s, p) => s + p.tasks.filter((t) => t.status !== "complete").length, 0)} tasks`);
+  lines.push("");
+
+  // --- Next Steps ---
+  lines.push("## Next Steps");
+  lines.push("");
+  lines.push("1. Run `plan_project()` with more specific tasks if needed");
+  lines.push("2. Run `/go` to execute the fleet");
+  lines.push("3. Monitor progress in the widget bar");
+  lines.push("");
+  lines.push("---");
+  lines.push("");
+  lines.push(`> Architecture reference: [PROJECT-DESIGN.md](./PROJECT-DESIGN.md)`);
+  lines.push(`> Full analysis: [ANALYSIS.md](./ANALYSIS.md)`);
+  lines.push("");
+
+  return lines.join("\n");
+}
+
+/**
+ * Extract a section from the analysis output by header.
+ */
+function extractSection(output: string, section: string): string {
+  const start = output.indexOf(`## ${section}`);
+  if (start < 0) return "";
+  const next = output.indexOf("## ", start + 3);
+  const end = next > start ? next : output.length;
+  return output.slice(start + 3 + section.length + 2, end).trim();
+}
+
+/**
+ * Extract project name from package.json or directory name.
+ */
+function getProjectName(cwd: string): string {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(cwd, "package.json"), "utf-8"));
+    if (pkg.name) return pkg.name;
+  } catch { /* ignore */ }
+  try {
+    const readme = fs.readFileSync(path.join(cwd, "README.md"), "utf-8");
+    const m = readme.match(/^#\s+(.+)$/m);
+    if (m) return m[1].trim();
+  } catch { /* ignore */ }
+  return path.basename(cwd);
+}
+
+// ============================================================================
 // Main extension
 // ============================================================================
 
@@ -2060,6 +2240,18 @@ export default function (pi: ExtensionAPI) {
         response += `  ${th ? th.fg("dim", "→") : "→"} Run ${th ? th.fg("accent", "/go") : "/go"} to execute the fleet\n\n`;
       }
 
+      // ── Auto-generate PROJECT-DESIGN.md from analysis ──
+      const designDoc = generateDesignDocument(result, ctx);
+      const designPath = path.join(ctx.cwd, "PROJECT-DESIGN.md");
+      try {
+        await fs.promises.writeFile(designPath, designDoc, "utf-8");
+        if (result.success) {
+          response += `${th ? th.fg("accent", "📄") : "📄"} Design document generated: PROJECT-DESIGN.md\n`;
+        }
+      } catch {
+        // Non-fatal — design doc generation is optional
+      }
+
       return { content: [{ type: "text", text: response }] };
     },
   });
@@ -2109,12 +2301,21 @@ export default function (pi: ExtensionAPI) {
       saveState();
       refreshWidget(ctx);
 
+      // ── Auto-generate PROJECT-PLAN.md from planning ──
+      const planDoc = generatePlanDocument(params.name, phases, ctx);
+      const planPath = path.join(ctx.cwd, "PROJECT-PLAN.md");
+      try {
+        await fs.promises.writeFile(planPath, planDoc, "utf-8");
+      } catch {
+        // Non-fatal — plan doc generation is optional
+      }
+
       const summary = phases
         .map((p, i) => `  P${i + 1}: ${p.name} (${p.tasks.length} tasks)`)
         .join("\n");
 
       return {
-        content: [{ type: "text", text: `Project "${params.name}" planned:\n${summary}` }],
+        content: [{ type: "text", text: `Project "${params.name}" planned:\n${summary}\n\n📄 Plan document: PROJECT-PLAN.md` }],
         details: { phases, totalPhases: phases.length },
       };
     },
