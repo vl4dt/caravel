@@ -31,7 +31,7 @@ import {
   matchesKey,
 } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { ZFS } from "./zellij-fleet";
+import { ZFS } from "./zellij-fleet.ts";
 
 // ============================================================================
 // Types
