@@ -1,7 +1,7 @@
 ---
 name: caravel
 description: Fleet orchestration system for multi-agent software development. Use when the user wants to build a complete application, break work into phases, delegate to specialized agents, or run iterative review loops. Supports planning, execution, design review with vision, and quality gates.
-allowed-tools: plan_project,run_phase,review_task,fleet_control,fleet_status
+allowed-tools: plan_project,run_phase,review_task,fleet_control,fleet_status,fleet_error_diagnosis
 ---
 
 # Caravel Fleet Orchestration
@@ -90,6 +90,28 @@ The widget bar above the editor shows fleet status in real-time. It is always st
 
 - Report phase completions and review results
 - If a review fails, explain what needs fixing
+
+### Error Diagnosis
+
+When phases or tasks fail, use `fleet_error_diagnosis` or `/diagnose` to get a structured diagnosis:
+
+```javascript
+fleet_error_diagnosis()
+// or
+/diagnose
+```
+
+The diagnosis covers:
+- **Missing agents** — which agent is needed and how to create it
+- **Exit codes** — what non-zero codes mean and how to debug
+- **stderr content** — pattern-matched against known error types
+- **Token limits** — context window exceeded, budget overflows
+- **Rate limits** — API rate limiting from the provider
+- **Authentication** — invalid/expired API keys
+- **Model errors** — invalid model names or unavailable models
+- **Review loop exhaustion** — when reviews fail repeatedly
+
+Each cause includes: severity level, affected phase/task, root cause explanation, and step-by-step fix instructions.
 
 ## How It Works
 

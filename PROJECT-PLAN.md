@@ -73,6 +73,8 @@ Updates on:
 5. `/analyze` command proper error reporting
 6. `runAnalysisPhase` consolidation (single analyzer path)
 7. Documentation updates (README, SKILL.md, PROJECT-DESIGN.md, PROJECT-PLAN.md)
+8. `fleet_error_diagnosis` tool — structured diagnosis of fleet failures (missing agents, exit codes, stderr, token limits, rate limits, auth errors)
+9. `/diagnose` command — CLI entry point for error diagnosis
 
 ### Remaining Work (Future)
 - Planner agent conversation flow (natural language planning)
