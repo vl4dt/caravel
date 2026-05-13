@@ -88,6 +88,7 @@ const BORDER_BR = "╝";
 const BORDER_H = "═";
 
 function formatTokenCount(count: number): string {
+  if (count == null || isNaN(count)) return "0";
   if (count < 1000) return String(count);
   if (count < 10000) return `${(count / 1000).toFixed(1)}k`;
   return `${Math.round(count / 1000)}k`;
@@ -106,6 +107,14 @@ function centerPad(text: string, width: number): string {
 
 function escape(s: string): string {
   return s.replace(/[<>]/g, "");
+}
+
+function sanitizeDisplay(text: string): string {
+  return escape(text)
+    .replace(/["']\s*:\s*["']?[a-zA-Z0-9]{8,16}["']?\s*/g, "")
+    .replace(/["']\s*(id|responseModel|requestId|reqId|respId|response_id|request_id|req_id)\s*:\s*"[^"]*"/gi, "")
+    .replace(/,\s*(["'])\s*/g, "$1")
+    .replace(/[{}\[\]]/g, "");
 }
 
 function buildAgentGrid(snap: StatusBarFleetSnapshot): string {
@@ -135,11 +144,11 @@ function buildAgentDetails(snap: StatusBarFleetSnapshot): string {
     if (snap.mainAgentActivity && snap.mainAgentActivity.action !== "idle") {
       const ma = snap.mainAgentActivity;
       const icon = ma.status === "executing" ? "▸" : "◇";
-      return `  ${icon} ${ma.action} → ${escape(ma.detail).slice(0, 50)}`;
+      return `  ${icon} ${ma.action} → ${sanitizeDisplay(ma.detail).slice(0, 50)}`;
     }
     if (snap.lastAction) {
       const ago = snap.lastActionAgo || "";
-      return `  ● last: ${escape(snap.lastAction)}${ago ? ` (${ago})` : ""}`;
+      return `  ● last: ${sanitizeDisplay(snap.lastAction)}${ago ? ` (${ago})` : ""}`;
     }
     return "  ● idle — waiting for work";
   }
@@ -166,11 +175,7 @@ function buildPhaseInfo(snap: StatusBarFleetSnapshot): string {
   const pBar = snap.totalTasks > 0
     ? `[${progressBar(snap.completedTasks, snap.totalTasks, 15)} ${snap.progress}%]`
     : "[░░░░░░░░░░░░░░░ 0%]";
-  const statusIcon = snap.currentPhaseStatus === "complete" ? "✓" :
-    snap.currentPhaseStatus === "failed" ? "✗" :
-    snap.currentPhaseStatus === "reviewing" ? "◉" :
-    snap.currentPhaseStatus === "running" ? "▸" : "○";
-  return `${phaseLabel}  ${pBar}  ${snap.completedTasks}/${snap.totalTasks} tasks  ${snap.elapsed}  ${statusIcon}`;
+  return `${phaseLabel}  ${pBar}  ${snap.completedTasks}/${snap.totalTasks} tasks`;
 }
 
 function buildFooter(snap: StatusBarFleetSnapshot): string {
@@ -1329,6 +1334,7 @@ function generateId(): string {
 }
 
 function formatTokens(count: number): string {
+  if (count == null || isNaN(count)) return "0";
   if (count < 1000) return count.toString();
   if (count < 10000) return `${(count / 1000).toFixed(1)}k`;
   return `${Math.round(count / 1000)}k`;
@@ -1783,11 +1789,13 @@ function loadState(ctx: ExtensionContext): void {
         currentPhaseIndex: data.currentPhaseIndex ?? 0,
         activeAgents: data.activeAgents ?? [],
         paused: data.paused ?? false,
-        startTime: data.startTime ?? Date.now(),
+        startTime: data.startTime != null ? data.startTime : Date.now(),
         reviewIterations: data.reviewIterations ?? 0,
         maxReviewIterations: data.maxReviewIterations ?? fleetState.maxReviewIterations,
         recentOutput: data.recentOutput ?? "",
-        totalFleetTokens: data.totalFleetTokens ?? 0,
+        totalFleetTokens: data.totalFleetTokens != null && !isNaN(data.totalFleetTokens)
+          ? data.totalFleetTokens
+          : 0,
         mainAgentActivity: data.mainAgentActivity ?? fleetState.mainAgentActivity,
       };
     }
@@ -1862,6 +1870,17 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
   const filled = Math.round((progress / 100) * 20);
   const bar = "█".repeat(filled) + "░".repeat(20 - filled);
 
+  // Find failed task for explanation
+  let failExplanation = "";
+  if (phase && phase.status === "failed") {
+    const failedTasks = phase.tasks.filter((t) => t.status === "failed");
+    if (failedTasks.length > 0) {
+      const lastFailed = failedTasks[failedTasks.length - 1];
+      const reason = lastFailed.stderr ? "error" : (lastFailed.output ? "output" : "unknown");
+      failExplanation = ` — ${lastFailed.agentName}: ${reason === "error" ? "exit code" : "error"}`;
+    }
+  }
+
   const ma = fleetState.mainAgentActivity;
   const activeAgentsList = fleetState.activeAgents.filter((a) => a.status !== "idle");
   let line3 = "";
@@ -1876,8 +1895,8 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
     return `${name}(${inp}/${out})`;
   }).join("  │  ");
   const tokenLine = agentTokens
-    ? `▸ tokens: ${formatTokens(totalInput)}i/${formatTokens(totalOutput)}o │ [${agentTokens}]`
-    : `▸ fleet: ${formatTokens(fleetState.totalFleetTokens)}`;
+    ? `▸ tokens: ${formatTokens(totalInput)}in / ${formatTokens(totalOutput)}out │ [${agentTokens}]`
+    : `▸ fleet: ${formatTokens(fleetState.totalFleetTokens)} tokens`;
 
   if (fleetState.paused) {
     line3 = muted("  ⏸ PAUSED");
@@ -1894,7 +1913,7 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
       const statusColor = t.status === "reviewing" ? "accent" : "success";
       const truncatedDesc = truncate(t.description, 28);
       taskDetails.push(
-        `${statusIcon} P${phase.tasks.indexOf(t) + 1} [${th.fg(statusColor, statusText)}] ${t.agentName}#${idx + 1} → ${truncatedDesc}`,
+        `${statusIcon} T${idx + 1} [${th.fg(statusColor, statusText)}] ${t.agentName} → ${truncatedDesc}`,
       );
     });
 
@@ -1903,7 +1922,7 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
     if (lastComplete) {
       const idx = phase.tasks.indexOf(lastComplete);
       taskDetails.push(
-        `  ${th.fg("success", "✓")} P${idx + 1} [OK] ${lastComplete.agentName}#${idx + 1} → ${truncate(lastComplete.description, 28)}`,
+        `  ${th.fg("success", "✓")} T${idx + 1} [OK] ${lastComplete.agentName} → ${truncate(lastComplete.description, 28)}`,
       );
     }
 
@@ -1912,7 +1931,7 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
       const next = pendingTasks[0];
       const idx = phase.tasks.indexOf(next);
       taskDetails.push(
-        `  ${th.fg("muted", "○")} P${idx + 1} [WAIT] ${next.agentName}#${idx + 1} → ${truncate(next.description, 28)}`,
+        `  ${th.fg("muted", "○")} T${idx + 1} [WAIT] ${next.agentName} → ${truncate(next.description, 28)}`,
       );
     }
 
@@ -1952,7 +1971,7 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
   }
 
   return [
-    edge(`${th.fg("accent", "CARAVEL FLEET")}  ${muted("│")}  ${phaseLabel}  ${muted("│")}  ${th.fg(sColor, sIcon + " " + sText)}`),
+    edge(`${th.fg("accent", "CARAVEL FLEET")}  ${muted("│")}  ${phaseLabel}  ${muted("│")}  ${th.fg(sColor, sIcon + " " + sText + failExplanation)}`),
     edge(`[${bar}] ${progress}%  ${muted("│")}  ${completedTasks}/${totalTasks} tasks  │  ${elapsed}`),
     edge(line3 + (followOutput ? followOutput : "")),
     edge(`${th.fg("dim", `${fleetState.reviewIterations} reviews`)}  ${muted("│")}  ${muted(`Elapsed: ${elapsed}`)}`),
@@ -3163,7 +3182,7 @@ export default function (pi: ExtensionAPI) {
         }
         if (part.type === "text") {
           action = "response";
-          detail = truncateToWidth(part.text.slice(0, 60), 40);
+          detail = sanitizeDisplay(truncateToWidth(part.text.slice(0, 60), 40));
         }
       }
       fleetState.mainAgentActivity = {
