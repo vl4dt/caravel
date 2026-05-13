@@ -1,0 +1,48 @@
+{
+  "version": "1.0.0",
+  "description": "Benchmark configuration for cross-model comparison in Caravel",
+  "scoring": {
+    "codeQuality": {
+      "weight": 0.30,
+      "criteria": [
+        "correctness",
+        "type_safety",
+        "readability",
+        "error_handling",
+        "no_stubs"
+      ]
+    },
+    "completeness": {
+      "weight": 0.25,
+      "criteria": [
+        "requirements_met",
+        "edge_cases",
+        "acceptance_criteria"
+      ]
+    },
+    "efficiency": {
+      "weight": 0.20,
+      "criteria": [
+        "algorithm_quality",
+        "token_usage",
+        "review_cycles_needed",
+        "speed"
+      ]
+    },
+    "security": {
+      "weight": 0.25,
+      "criteria": [
+        "input_validation",
+        "secret_handling",
+        "error_handling",
+        "injection_prevention"
+      ]
+    }
+  },
+  "models": [],
+  "autoRunBenchmark": true,
+  "output": {
+    "format": ["markdown", "json"],
+    "directory": "tests/"
+  }
+}
