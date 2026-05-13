@@ -114,7 +114,17 @@ function sanitizeDisplay(text: string): string {
     .replace(/["']\s*:\s*["']?[a-zA-Z0-9]{8,16}["']?\s*/g, "")
     .replace(/["']\s*(id|responseModel|requestId|reqId|respId|response_id|request_id|req_id)\s*:\s*"[^"]*"/gi, "")
     .replace(/,\s*(["'])\s*/g, "$1")
-    .replace(/[{}\[\]]/g, "");
+    .replace(/[{}\[\]]/g, "")
+    .replace(/["']?[a-f0-9]{8,16}["']?\s*,\s*["']?[a-f0-9]{8,16}["']?/g, "")
+    .replace(/"[^"]*",\s*"[^"]*":/g, ":")
+    .trim();
+}
+
+function safeAppend(buf: string, chunk: string, maxBytes: number): string {
+  const combined = buf + chunk;
+  if (combined.length <= maxBytes) return combined;
+  // Keep the tail — useful for follow/scrollback
+  return combined.slice(-(maxBytes - 100)) + "...[truncated]";
 }
 
 function buildAgentGrid(snap: StatusBarFleetSnapshot): string {
@@ -1211,7 +1221,7 @@ function appendToFollowedAgent(agentName: string, text: string): void {
   const key = `agent-${agentName}`;
   const buf = agentOutputBuffers.get(key);
   if (buf) {
-    buf.stdout += text;
+    buf.stdout = safeAppend(buf.stdout, text, 500_000);
   }
 }
 
@@ -1223,7 +1233,7 @@ function appendErrToFollowedAgent(agentName: string, text: string): void {
   const key = `agent-${agentName}`;
   const buf = agentOutputBuffers.get(key);
   if (buf) {
-    buf.stderr += text;
+    buf.stderr = safeAppend(buf.stderr, text, 500_000);
   }
 }
 
@@ -3781,7 +3791,7 @@ export default function (pi: ExtensionAPI) {
           }
           // Capture agent output for follow
           const buf2 = agentOutputBuffers.get(agentKey2);
-          if (buf2) buf2.stdout += chunk;
+          if (buf2) buf2.stdout = safeAppend(buf2.stdout, chunk, 500_000);
           // Also route to followed agent buffer in real-time
           appendToFollowedAgent(agentDef.name, chunk);
         };
