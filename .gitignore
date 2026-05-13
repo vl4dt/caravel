@@ -13,3 +13,6 @@ Thumbs.db
 .beads/
 *.db
 .beads-credential-key
+
+# Caravel fleet state (persisted per project, untracked)
+.caravel/

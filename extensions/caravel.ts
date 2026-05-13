@@ -7,7 +7,7 @@
  * UI:
  *   - Fleet status: persistent 6-line widget bar above the editor
  *   - The widget bar shows: header/status, phase + progress, summary stats, last action
- *   - /fleet command: toggle the widget bar visibility
+ *   - /caravel-fleet command: toggle the widget bar visibility
  *   - The widget bar is always stable: fixed 6 lines, never changes height or width
  */
 
@@ -32,8 +32,173 @@ import {
 } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
+// ── Inline: Testability Enforcement Module ──────────────────────────────────────
+
+interface CriterionFailure {
+  criterion: "test_files" | "acceptance_criteria" | "measurable_outcome";
+  missing: string;
+  suggestion: string;
+}
+
+interface TaskValidationResult {
+  taskId: string;
+  taskDescription: string;
+  failures: CriterionFailure[];
+  passed: boolean;
+}
+
+interface PlanValidationResult {
+  allPassed: boolean;
+  taskResults: TaskValidationResult[];
+  allFailures: CriterionFailure[];
+  blockMessage: string | null;
+}
+
+function enforceTestability(
+  phases: Array<{ name: string; tasks: Array<{ id?: string; task: string }> }>
+): PlanValidationResult {
+  const taskResults: TaskValidationResult[] = [];
+  const allFailures: CriterionFailure[] = [];
+  let taskIdCounter = 0;
+
+  function hasTestsOrVerification(desc: string): boolean {
+    const lower = desc.toLowerCase();
+    const testFilePatterns = [/\.test\./, /_test\./, /\.spec\./, /test\//, "test_", "__tests__", "tests/", "tests\\", "create test", "write test", "add test", "implement test", "unit test", "integration test", "e2e test", "end-to-end test", "test file", "test case", "test suite"];
+    for (const p of testFilePatterns) {
+      if (typeof p === "string") { if (lower.includes(p)) return true; } else { if (p.test(desc)) return true; }
+    }
+    if (/(\b|with|needs|add|write|create)\s*tests?\b/i.test(desc)) return true;
+    for (const p of testFilePatterns) {
+      if (typeof p === "string") { if (lower.includes(p)) return true; } else { if (p.test(desc)) return true; }
+    }
+    const verifPatterns = ["npm test", "yarn test", "pnpm test", "npx jest", "npx vitest", "npx mocha", "cargo test", "go test", "pytest", "make test", "run tests", "run verification", "execute test", "verify", "check", "assert", "validate", "--coverage", "--ci", "test --", "test/", "test command", "test script", "test runner"];
+    for (const p of verifPatterns) { if (lower.includes(p)) return true; }
+    return false;
+  }
+
+  function hasAcceptanceCriteria(desc: string): boolean {
+    const lower = desc.toLowerCase();
+    const criterionPatterns = ["acceptance", "accept ", "done when", "definition of done", "must ", "should ", "shall ", "will ", "if and only if", "when .* then", "as long as", "given", "when.*then", "verify that", "ensure", "guarantee", "requirement", "condition", "expected.*:", "expected output", "expected behavior", "must.*:", "should.*:", "will.*:"];
+    for (const p of criterionPatterns) { if (lower.includes(p)) return true; }
+    if (/^\s*[-*•]\s+\S.*:/m.test(desc)) return true;
+    if (/^\s*\d+\.\s+\S.*:/m.test(desc)) return true;
+    if (/^\s*>\s+\S/m.test(desc)) return true;
+    if (/: .{3,}$/.test(desc.trim())) return true;
+    return false;
+  }
+
+  function hasMeasurableOutcome(desc: string): boolean {
+    if (/\.(tsx?|js|ts|py|go|rs|html|css|scss|json|yaml|yml|md|sql|graphql)(\b|\s|$)/i.test(desc)) return true;
+    if (/src\//i.test(desc) || /lib\//i.test(desc) || /dist\//i.test(desc) || /migrations\//i.test(desc)) return true;
+    if (/\b(create|add|write|generate|implement|build|generate|produce)\s+\S+\.(tsx?|js|ts|py|go|rs|html|css|scss|json|yaml|yml|md|sql|graphql)/i.test(desc)) return true;
+    if (/\d+\s*(%|ms|s|m|kb|mb|gb)/.test(desc)) return true;
+    if (/(less than|greater than|at most|at least|under |above |within )\s+\d/i.test(desc)) return true;
+    if (/(complexity|latency|throughput|memory|speed|duration|size|length|count|number)/i.test(desc)) return true;
+    if (/(return|output|result|response|status code|api endpoint|endpoint|route)/i.test(desc)) return true;
+    if (/(export|export default|function|class|interface|type|enum|const)\s+\w+/i.test(desc)) return true;
+    if (/\b(plan|document|report|spec|design|architecture|schema|config|interface|type)\b/i.test(desc)) return true;
+    if (/(\bcreate\b|\bnew\b)/i.test(desc) && /(\bfile\b|\bcomponent\b|\bmodule\b|\bclass\b|\bfunction\b|\binterface\b|\btype\b|\bschema\b|\bendpoint\b|\broute\b)/i.test(desc)) return true;
+    return false;
+  }
+
+  for (const phase of phases) {
+    for (const task of phase.tasks) {
+      const id = task.id ?? `task-${taskIdCounter++}`;
+      const failures: CriterionFailure[] = [];
+      if (!hasTestsOrVerification(task.task)) {
+        failures.push({ criterion: "test_files", missing: "No test files or verification commands mentioned", suggestion: "Add test-related language: 'Create src/component.test.ts', 'Run npm test', 'Include pytest for module X', or specify verification commands." });
+      }
+      if (!hasAcceptanceCriteria(task.task)) {
+        failures.push({ criterion: "acceptance_criteria", missing: "No acceptance criteria or done conditions specified", suggestion: "Add done conditions: 'Done when: X works, Y passes, Z is created', 'Acceptance: component renders with props A, B, C', or use bullet lists with checkable items." });
+      }
+      if (!hasMeasurableOutcome(task.task)) {
+        failures.push({ criterion: "measurable_outcome", missing: "No measurable or concrete deliverable specified", suggestion: "Specify what concrete artifact will exist after: 'File X is created', 'Function Y returns Z', 'Endpoint /api/X responds with status 200', 'Component renders with props A and B'." });
+      }
+      taskResults.push({ taskId: id, taskDescription: task.task, failures, passed: failures.length === 0 });
+      allFailures.push(...failures);
+    }
+  }
+
+  const allPassed = allFailures.length === 0;
+  const blockMessage = allPassed
+    ? null
+    : buildBlockMessage(taskResults, allFailures);
+
+  return { allPassed, taskResults, allFailures, blockMessage };
+}
+
+function buildBlockMessage(taskResults: TaskValidationResult[], allFailures: CriterionFailure[]): string {
+  const lines: string[] = [];
+  lines.push("⛔ Task creation BLOCKED — testability enforcement");
+  lines.push("");
+  lines.push("Every task MUST have: (1) tests/verification, (2) acceptance criteria, (3) measurable outcome.");
+  lines.push("");
+  const grouped = new Map<string, CriterionFailure[]>();
+  for (const r of taskResults) {
+    if (r.failures.length > 0) grouped.set(r.taskDescription, r.failures);
+  }
+  let taskIdx = 1;
+  for (const [desc, failures] of grouped) {
+    lines.push(`Task ${taskIdx}: "${truncate(desc, 60)}"`);
+    for (const f of failures) {
+      const icon = f.criterion === "test_files" ? "🧪" : f.criterion === "acceptance_criteria" ? "✅" : "📏";
+      lines.push(`  ${icon} ${f.criterion}: ${f.missing}`);
+      lines.push(`     → ${f.suggestion}`);
+    }
+    lines.push("");
+    taskIdx++;
+  }
+  lines.push("Fix the tasks above and retry plan_project().");
+  return lines.join("\n");
+}
+
+// ── End Inline Testability Enforcement ──────────────────────────────────────
+
 // ===========================================================================
-// ═══════════════════════════════════════════════════════════════════════════
+// Progress output helpers
+// ===========================================================================
+
+/** Remove garbage tokens (JSON fragments, control chars, etc.) from raw chunk text. */
+function cleanChunkText(chunk: string): string {
+  // Split into lines, filter noise, take last meaningful line
+  const lines = chunk.split("\n").filter((l) => {
+    const trimmed = l.trim();
+    // Skip empty, pure whitespace, control chars
+    if (!trimmed || /^\s*$/.test(trimmed)) return false;
+    // Skip lines that are entirely JSON-like garbage (no spaces, all braces/brackets/commas)
+    if (/^[\{\}\[\],:"\-0-9.\/_]+$/.test(trimmed)) return false;
+    // Skip lines that are pure JSON fragments (start with { or [ and have no real content)
+    if (/^\s*[\{\[]\s*$/.test(trimmed)) return false;
+    // Skip lines that are purely whitespace + a single punctuation char
+    if (/^\s*[:\-\.,;!?()]+\s*$/.test(trimmed)) return false;
+    // Skip very short noise lines
+    if (trimmed.length < 2) return false;
+    return true;
+  });
+  if (lines.length === 0) return "";
+  return lines[lines.length - 1].trim();
+}
+
+/** Format task progress output: T2 [RUN] developer → Build all gauge... (model) [72k tokens] | 16m */
+function formatTaskProgress(
+  taskIndex: number,
+  taskStatus: string,
+  agentName: string,
+  model: string,
+  tokensUsed: number,
+  elapsedMs: number,
+  description?: string,
+): string {
+  const icon = taskStatus === "complete" ? th.fg("success", "✓") : taskStatus === "failed" ? th.fg("error", "✗") : taskStatus === "waiting" ? th.fg("muted", "○") : th.fg("accent", "▸");
+  const statusLabel = taskStatus === "complete" ? "OK" : taskStatus === "reviewing" ? "REV" : taskStatus === "waiting" ? "WAIT" : "RUN";
+  const statusColor = taskStatus === "reviewing" ? "accent" : taskStatus === "complete" ? "success" : taskStatus === "failed" ? "error" : taskStatus === "waiting" ? "muted" : "accent";
+  const statusText = th.fg(statusColor, statusLabel);
+  const truncatedDesc = truncate(description || "", 28);
+  const elapsedStr = elapsedMs >= 60_000 ? `${Math.floor(elapsedMs / 60_000)}m` : `${Math.floor(elapsedMs / 1000)}s`;
+  return `${icon} T${taskIndex + 1} [${statusText}] ${agentName} → ${truncatedDesc} (${model}) [${formatTokens(tokensUsed)} tokens] | ${elapsedStr}`;
+}
+
+// ===========================================================================
 // INLINE: ZFS Status Bar (from zfs_status_bar.ts)
 // ===========================================================================
 
@@ -68,6 +233,10 @@ interface StatusBarFleetSnapshot {
   allAgents: StatusAgentEntry[];
   reviewIterations: number;
   totalFleetTokens: number;
+  phaseCodeReviewsApproved: number;
+  phaseCodeReviewsPending: number;
+  phaseDesignReviewsApproved: number;
+  phaseDesignReviewsPending: number;
   totalAgentInputTokens: number;
   totalAgentOutputTokens: number;
   mainAgentActivity?: { status: string; action: string; detail: string; timestamp: number } | null;
@@ -188,13 +357,48 @@ function buildPhaseInfo(snap: StatusBarFleetSnapshot): string {
   return `${phaseLabel}  ${pBar}  ${snap.completedTasks}/${snap.totalTasks} tasks`;
 }
 
+/** Build review status string with per-phase ✓/○ icons. */
+function buildReviewStatusLabel(codeApproved: number, codePending: number, designApproved: number, designPending: number): string {
+  const parts: string[] = [];
+  if (codeApproved > 0) parts.push(`${codeApproved}✓`);
+  if (codePending > 0) parts.push(`${codePending}○`);
+  if (designApproved > 0) parts.push(`${designApproved}✓`);
+  if (designPending > 0) parts.push(`${designPending}○`);
+  if (parts.length === 0) return "○ 0 approved  ○ 0 pending";
+  return parts.join("  ");
+}
+
+/** Build review status from fleetState for the widget bar. */
+function buildWidgetReviewStatus(state: FleetState): string {
+  const phase = state.phases[state.currentPhaseIndex];
+  if (!phase) return "○ 0 approved  ○ 0 pending";
+  let codeApproved = 0, codePending = 0, designApproved = 0, designPending = 0;
+  for (const t of phase.tasks) {
+    if (t.codeReviewStatus === "approved") codeApproved++;
+    else if (t.codeReviewStatus === "pending") codePending++;
+    if (t.designReviewStatus === "approved") designApproved++;
+    else if (t.designReviewStatus === "pending") designPending++;
+  }
+  const label = buildReviewStatusLabel(codeApproved, codePending, designApproved, designPending);
+  // If all reviews approved, show the R1/R2/R3 style label
+  const totalApproved = codeApproved + designApproved;
+  if (totalApproved > 0 && totalApproved <= state.reviewIterations) {
+    return `✓ R${state.reviewIterations} approved`;
+  }
+  return label;
+}
+
 function buildFooter(snap: StatusBarFleetSnapshot): string {
   const tokenStr = `▸ ${formatTokenCount(snap.totalAgentInputTokens)}i / ${formatTokenCount(snap.totalAgentOutputTokens)}o | fleet: ${formatTokenCount(snap.totalFleetTokens)} tokens`;
-  const reviewStr = snap.reviewIterations > 0 ? `#${snap.reviewIterations}` : "";
-  const reviewLabel = reviewStr ? `reviews${reviewStr}` : "0 reviews";
+  // Per-phase review status
+  const codeApproved = snap.phaseCodeReviewsApproved || 0;
+  const codePending = snap.phaseCodeReviewsPending || 0;
+  const designApproved = snap.phaseDesignReviewsApproved || 0;
+  const designPending = snap.phaseDesignReviewsPending || 0;
+  const reviewLabel = buildReviewStatusLabel(codeApproved, codePending, designApproved, designPending);
   const parts: string[] = [
     reviewLabel,
-    `Elapsed: ${snap.elapsed}`,
+    `Review time: ${snap.elapsed}`,
     snap.zfsActive ? "ZFS" : "pi",
   ];
   if (snap.platform) parts.push(snap.platform);
@@ -227,8 +431,12 @@ export function renderStatusBar(snap: StatusBarFleetSnapshot): string {
 export function renderCompactStatusBar(snap: StatusBarFleetSnapshot): string {
   const agentsGrid = buildAgentGrid(snap);
   const phaseInfo = buildPhaseInfo(snap);
-  const tokenLine = `▸ ${formatTokenCount(snap.totalAgentInputTokens)}i / ${formatTokenCount(snap.totalAgentOutputTokens)}o  │  fleet: ${formatTokenCount(snap.totalFleetTokens)} tokens  │  ${snap.reviewIterations} reviews`;
-  const elapsedLine = `Elapsed: ${snap.elapsed}`;
+  const codeApproved = snap.phaseCodeReviewsApproved || 0;
+  const codePending = snap.phaseCodeReviewsPending || 0;
+  const designApproved = snap.phaseDesignReviewsApproved || 0;
+  const designPending = snap.phaseDesignReviewsPending || 0;
+  const tokenLine = `▸ ${formatTokenCount(snap.totalFleetTokens)} tokens (fleet total)  │  per-agent: ${formatTokenCount(snap.totalAgentInputTokens)}i / ${formatTokenCount(snap.totalAgentOutputTokens)}o  │  ${buildReviewStatusLabel(codeApproved, codePending, designApproved, designPending)}`;
+  const elapsedLine = `Review time: ${snap.elapsed}`;
   const modeLine = snap.zfsActive ? "[ZFS]" : "[pi]";
   const header = `${snap.fleetName}  ${modeLine}  │  P${snap.currentPhaseIndex + 1}/${snap.totalPhases}`;
   return [
@@ -258,10 +466,19 @@ export function buildFleetSnapshot(opts: {
 }): StatusBarFleetSnapshot {
   const now = Date.now();
   const elapsed = formatDuration(now - opts.startTime);
+  const currentPhase = opts.phases[opts.currentPhaseIndex];
+  let phaseCodeApproved = 0, phaseCodePending = 0, phaseDesignApproved = 0, phaseDesignPending = 0;
+  if (currentPhase) {
+    for (const t of currentPhase.tasks) {
+      if (t.codeReviewStatus === "approved") phaseCodeApproved++;
+      else if (t.codeReviewStatus === "pending") phaseCodePending++;
+      if (t.designReviewStatus === "approved") phaseDesignApproved++;
+      else if (t.designReviewStatus === "pending") phaseDesignPending++;
+    }
+  }
   const totalTasks = opts.phases.reduce((s, p) => s + p.tasks.length, 0);
   const completedTasks = opts.phases.reduce((s, p) => s + p.tasks.filter((t) => t.status === "complete" || t.status === "needs_fix").length, 0);
   const progress = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
-  const currentPhase = opts.phases[opts.currentPhaseIndex];
   const currentPhaseName = currentPhase?.name || "";
   const currentPhaseStatus = currentPhase?.status || "pending";
   const allAgentNames = new Set<string>();
@@ -301,6 +518,10 @@ export function buildFleetSnapshot(opts: {
     totalFleetTokens: opts.totalFleetTokens, totalAgentInputTokens: totalInputTokens,
     totalAgentOutputTokens: totalOutputTokens, mainAgentActivity: opts.mainAgentActivity, paused: opts.paused,
     lastAction: opts.lastAction, lastActionAgo: opts.lastActionAgo,
+    phaseCodeReviewsApproved: phaseCodeApproved,
+    phaseCodeReviewsPending: phaseCodePending,
+    phaseDesignReviewsApproved: phaseDesignApproved,
+    phaseDesignReviewsPending: phaseDesignPending,
   };
 }
 
@@ -782,8 +1003,8 @@ class ZFS {
   async resumeAll(): Promise<boolean> {
     this.paused = false; this.skipAgent = null;
     for (const [, pane] of this.panes) {
-      if (pane.process && !pane.running) {
-        try { process.kill(pane.process.pid, "SIGCONT"); } catch { pane.exited = true; }
+      if (pane.process) {
+        try { process.kill(pane.process.pid, "SIGCONT"); } catch { /* already dead */ }
       }
     }
     return true;
@@ -1025,6 +1246,278 @@ class ZFS {
 
 
 // ===========================================================================
+// Background Process Manager — launches fleet as a detached process,
+// supports migrating running fleet to ZFS mid-execution.
+// ===========================================================================
+
+interface BackgroundProcessState {
+  running: boolean;
+  pid: number | null;
+  stateFile: string;
+  startedAt: number;
+  cwd: string;
+  // ZFS migration state (populated after migrate_to_zfs)
+  zfsSession?: {
+    sessionName: string;
+    layoutPath: string;
+    agentPanes: string[];
+    statusBarActive: boolean;
+    migratedAt: number;
+  };
+}
+
+class BackgroundProcessManager {
+  private state: BackgroundProcessState;
+
+  constructor() {
+    this.state = { running: false, pid: null, stateFile: "", startedAt: 0, cwd: process.cwd() };
+  }
+
+  getState(): BackgroundProcessState { return { ...this.state }; }
+
+  setCwd(cwd: string): void {
+    this.state.cwd = cwd;
+    this.state.stateFile = stateFilePath(cwd);
+  }
+
+  /**
+   * Save the current fleet state and launch it as a background process.
+   * The parent pi process can then exit while the fleet continues.
+   */
+  async startBackground(ctx: ExtensionContext): Promise<{ success: boolean; message: string }> {
+    // Save current state first
+    saveState();
+
+    // If already running in background, stop it first
+    if (this.state.running && this.state.pid) {
+      await this.stopBackground();
+    }
+
+    // If migrating from ZFS, transfer state to bg mode
+    if (this.state.zfsSession) {
+      // ZFS migration happened — just update state, don't re-spawn
+      this.state.zfsSession = undefined;
+      this.state.running = true;
+      this.state.startedAt = Date.now();
+      this.state.stateFile = stateFilePath(ctx.cwd);
+      saveState();
+      return { success: true, message: "Background mode activated. Fleet state saved. Use /bg-status to monitor." };
+    }
+
+    const bgProc = spawn(
+      process.execPath,
+      [process.argv[1], "--bg-mode"],
+      { detached: true, stdio: "ignore", cwd: ctx.cwd, shell: os.platform() === "win32" }
+    );
+
+    this.state = {
+      running: true,
+      pid: bgProc.pid ?? null,
+      stateFile: stateFilePath(ctx.cwd),
+      startedAt: Date.now(),
+      cwd: ctx.cwd,
+    };
+
+    // Allow parent to exit without waiting for child
+    bgProc.unref();
+
+    return {
+      success: true,
+      message:
+        `✅ Fleet launched as background process.\n\n` +
+        `  PID: ${this.state.pid ?? "unknown"}\n` +
+        `  State: ${this.state.stateFile}\n` +
+        `  Started: ${new Date(this.state.startedAt).toISOString()}\n\n` +
+        `  You can now close pi. Fleet continues running in background.\n` +
+        `  Use /bg-status to check progress.`,
+    };
+  }
+
+  /**
+   * Stop the background fleet process (if running).
+   * Fleet state is preserved in state.json for resumption.
+   */
+  async stopBackground(): Promise<{ success: boolean; message: string }> {
+    if (!this.state.running || !this.state.pid) {
+      return { success: false, message: "No background fleet is running." };
+    }
+
+    const pid = this.state.pid;
+    try {
+      if (os.platform() === "win32") {
+        spawn("taskkill", ["/F", "/PID", String(pid)], { stdio: "ignore", shell: true });
+      } else {
+        try { process.kill(-pid, "SIGTERM"); } catch { try { process.kill(pid, "SIGTERM"); } catch { /* already dead */ } }
+      }
+    } catch {
+      // Process may have already exited
+    }
+
+    const prevPid = pid;
+    this.state = { running: false, pid: null, stateFile: this.state.stateFile, startedAt: 0, cwd: this.state.cwd };
+
+    return {
+      success: true,
+      message:
+        `Background fleet stopped (PID ${prevPid}).\n` +
+        `  State preserved at: ${this.state.stateFile}\n` +
+        `  Use /bg-start to relaunch from saved state.`,
+    };
+  }
+
+  /**
+   * Migrate a running fleet to a ZFS session.
+   * This checkpoint state, creates a ZFS session with agent panes,
+   * and transfers monitoring to the ZFS floating status bar.
+   */
+  async migrateToZFS(ctx: ExtensionContext): Promise<{ success: boolean; message: string }> {
+    // Save state checkpoint
+    saveState();
+
+    const zfs = ensureZFS();
+    const zfsCheck = await zfs.checkAndInitZellij();
+    if (!zfsCheck.available) {
+      return { success: false, message: `ZFS migration failed: ${zfsCheck.message}` };
+    }
+
+    // Check if session already exists
+    const zfsState = zfs.getFleetState();
+    if (zfsState.activePanes > 0 || zfsState.activeProcesses > 0) {
+      // ZFS session exists — refresh it instead
+      zfs.initStatusBar();
+      zfs.refreshStatusBar();
+      this.state.zfsSession = { sessionName: zfsState.sessionName, layoutPath: "", agentPanes: [], statusBarActive: true, migratedAt: Date.now() };
+      return { success: true, message: "ZFS session already active — status bar refreshed. Fleet continues in ZFS." };
+    }
+
+    // Discover agents for the ZFS layout
+    const allAgents = discoverAgents("both");
+    const agentDefs = allAgents
+      .filter((a) => a.name !== "orchestrator")
+      .map((a) => ({ name: a.name, description: a.description }));
+
+    if (agentDefs.length === 0) {
+      return { success: false, message: "No agents configured. Cannot create ZFS layout." };
+    }
+
+    // Create ZFS session
+    const sessionResult = await zfs.createSession(agentDefs, ctx.cwd);
+    if (!sessionResult.success) {
+      return { success: false, message: `Failed to create ZFS session: ${sessionResult.message}` };
+    }
+
+    // Initialize status bar
+    zfs.initStatusBar();
+
+    // Spawn orchestrator pane to continue fleet execution
+    const currentPhase = fleetState.phases[fleetState.currentPhaseIndex];
+    const nextTask = currentPhase
+      ? currentPhase.tasks.find((t) => t.status !== "complete")
+      : null;
+
+    if (nextTask) {
+      // Spawn orchestrator to continue execution
+      await zfs.spawnPane(
+        "orchestrator",
+        `Continue fleet execution from checkpoint. Current phase: ${currentPhase.name} (${fleetState.currentPhaseIndex + 1}/${fleetState.phases.length}). Current progress: ${fleetState.phases.reduce((s, p) => s + p.tasks.filter(t => t.status === "complete").length, 0)}/${fleetState.phases.reduce((s, p) => s + p.tasks.length, 0)} tasks complete.`,
+        undefined,
+        ctx.cwd
+      );
+    }
+
+    // Spawn agent panes for active tasks
+    const agentPanes: string[] = [];
+    for (const phase of fleetState.phases) {
+      for (const task of phase.tasks) {
+        if (task.status === "running" || task.status === "reviewing") {
+          const paneResult = await zfs.spawnPane(task.agentName, task.description, undefined, ctx.cwd);
+          if (paneResult.success) agentPanes.push(paneResult.paneId);
+        }
+      }
+    }
+
+    this.state.zfsSession = {
+      sessionName: zfsState.sessionName,
+      layoutPath: path.join(ctx.cwd, "zellij-layout.kdl"),
+      agentPanes,
+      statusBarActive: true,
+      migratedAt: Date.now(),
+    };
+
+    return {
+      success: true,
+      message:
+        `✅ Fleet migrated to ZFS.\n\n` +
+        `  Session: ${zfsState.sessionName}\n` +
+        `  Agent panes: ${agentPanes.length}\n` +
+        `  Status bar: active\n` +
+        `  Layout: ${path.join(ctx.cwd, "zellij-layout.kdl")}\n\n` +
+        `  Fleet continues inside ZFS. Use /zellij-status for overview.`,
+    };
+  }
+
+  /**
+   * Export ZFS fleet back to background mode.
+   * Stops ZFS, spawns a new background process.
+   */
+  async exportToBackground(): Promise<{ success: boolean; message: string }> {
+    const zfs = ensureZFS();
+    const zfsState = zfs.getFleetState();
+
+    // If no ZFS session, nothing to export
+    if (!zfsState.zellijAvailable || (zfsState.activePanes === 0 && zfsState.activeProcesses === 0)) {
+      // Check if there's already a ZFS session that's just idle
+      if (zfsState.zellijAvailable) {
+        return { success: false, message: "No ZFS session to export." };
+      }
+      return { success: false, message: "ZFS not available." };
+    }
+
+    // Stop ZFS session (preserves fleet state in state.json)
+    await zfs.cleanup();
+
+    // Spawn a new background process
+    const bgProc = spawn(
+      process.execPath,
+      [process.argv[1], "--bg-mode"],
+      { detached: true, stdio: "ignore", cwd: this.state.cwd, shell: os.platform() === "win32" }
+    );
+
+    this.state = {
+      running: true,
+      pid: bgProc.pid ?? null,
+      stateFile: this.state.stateFile,
+      startedAt: Date.now(),
+      cwd: this.state.cwd,
+    };
+    this.state.zfsSession = undefined;
+    bgProc.unref();
+
+    return {
+      success: true,
+      message:
+        `ZFS session stopped. Fleet exported to background.\n\n` +
+        `  PID: ${this.state.pid ?? "unknown"}\n` +
+        `  State: ${this.state.stateFile}\n` +
+        `  Use /bg-status to monitor.`,
+    };
+  }
+
+  /**
+   * Check if a background process with the given PID is still alive.
+   */
+  isAlive(pid: number): boolean {
+    try {
+      process.kill(pid, 0); // No-op check: throws if process doesn't exist
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+
+// ===========================================================================
 // Types
 // ============================================================================
 
@@ -1071,6 +1564,7 @@ interface FleetTask {
   agentModel?: string;
   tokensUsed?: number;
   messageCount?: number;
+  startedAt?: number;
   metadata?: { preFlight?: PreFlightScan; [key: string]: unknown };
 }
 
@@ -1184,6 +1678,14 @@ const activeProcesses = new Map<string, { proc: ReturnType<typeof spawn>; signal
 
 // ── ZFS fleet instance (bridges ZFS process management with fleet state) ──
 let zfs: ZFS | null = null;
+
+// ── Background process manager (bridges background execution with ZFS migration) ──
+const bgManager = new BackgroundProcessManager();
+
+function getBgManager(): BackgroundProcessManager {
+  bgManager.setCwd(_pi?.cwd ?? process.cwd());
+  return bgManager;
+}
 
 function ensureZFS(): ZFS {
   if (!zfs) {
@@ -1777,38 +2279,133 @@ function getPiInvocation(args: string[]): { command: string; args: string[] } {
 }
 
 // ============================================================================
-// State persistence
+// State persistence — file-based on-disk JSON
 // ============================================================================
 
+/** Directory where caravel persists its state files. */
+const STATE_DIR = ".caravel";
+
+/** Path to the state file. Resolved at call time using ctx.cwd. */
+function stateFilePath(cwd: string): string {
+  return path.join(cwd, STATE_DIR, "state.json");
+}
+
+/** Version of the state file schema. Bump when schema changes. */
+const STATE_VERSION = 1;
+
+interface SerializedFleetState {
+  version: number;
+  timestamp: number;
+  state: FleetState;
+}
+
+/**
+ * Save fleetState to a JSON file on disk.
+ * Uses atomic write (temp file + rename) so a crash mid-write never corrupts the saved state.
+ */
 function saveState(): void {
-  if (_pi) {
-    _pi.appendEntry("caravel-state", fleetState);
+  if (!_pi) return;
+  const filePath = stateFilePath(_pi.cwd);
+  try {
+    const dir = path.dirname(filePath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    const data: SerializedFleetState = {
+      version: STATE_VERSION,
+      timestamp: Date.now(),
+      state: JSON.parse(JSON.stringify(fleetState)), // deep clone
+    };
+    const tmpPath = filePath + ".tmp." + process.pid;
+    fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), "utf-8");
+    fs.renameSync(tmpPath, filePath);
+  } catch (err) {
+    console.warn("[caravel] Failed to save state:", err);
   }
 }
 
-function loadState(ctx: ExtensionContext): void {
-  const entries = ctx.sessionManager.getEntries();
-  const caravelEntries = entries
-    .filter((e) => e.type === "custom" && (e as any).customType === "caravel-state")
-    .reverse();
-  if (caravelEntries.length > 0) {
-    const data = (caravelEntries[0] as any).data;
-    if (data) {
-      fleetState = {
-        phases: data.phases ?? [],
-        currentPhaseIndex: data.currentPhaseIndex ?? 0,
-        activeAgents: data.activeAgents ?? [],
-        paused: data.paused ?? false,
-        startTime: data.startTime != null ? data.startTime : Date.now(),
-        reviewIterations: data.reviewIterations ?? 0,
-        maxReviewIterations: data.maxReviewIterations ?? fleetState.maxReviewIterations,
-        recentOutput: data.recentOutput ?? "",
-        totalFleetTokens: data.totalFleetTokens != null && !isNaN(data.totalFleetTokens)
-          ? data.totalFleetTokens
-          : 0,
-        mainAgentActivity: data.mainAgentActivity ?? fleetState.mainAgentActivity,
-      };
+/**
+ * Load fleetState from the on-disk JSON file.
+ * Returns true if a valid saved state was found and applied.
+ */
+function loadState(ctx: ExtensionContext): boolean {
+  const filePath = stateFilePath(ctx.cwd);
+  if (!fs.existsSync(filePath)) return false;
+
+  let raw: string;
+  try {
+    raw = fs.readFileSync(filePath, "utf-8");
+  } catch {
+    return false;
+  }
+
+  let parsed: any;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return false;
+  }
+
+  // Validate schema version
+  if (parsed.version == null || parsed.state == null) return false;
+  if (parsed.version > STATE_VERSION) {
+    console.warn(`[caravel] State file version ${parsed.version} is newer than supported version ${STATE_VERSION}.`);
+    return false;
+  }
+
+  const s = parsed.state;
+  if (typeof s.phases !== "object" || !Array.isArray(s.phases)) return false;
+  if (typeof s.currentPhaseIndex !== "number") return false;
+
+  fleetState = {
+    phases: s.phases ?? [],
+    currentPhaseIndex: s.currentPhaseIndex ?? 0,
+    activeAgents: s.activeAgents ?? [],
+    paused: s.paused ?? false,
+    startTime: s.startTime != null && !isNaN(s.startTime) ? s.startTime : Date.now(),
+    reviewIterations: s.reviewIterations ?? 0,
+    maxReviewIterations: s.maxReviewIterations ?? fleetState.maxReviewIterations,
+    recentOutput: s.recentOutput ?? "",
+    totalFleetTokens: s.totalFleetTokens != null && !isNaN(s.totalFleetTokens)
+      ? s.totalFleetTokens
+      : 0,
+    mainAgentActivity: s.mainAgentActivity ?? fleetState.mainAgentActivity,
+  };
+
+  return true;
+}
+
+/**
+ * Check if a saved state file exists and is valid for resumption.
+ */
+function canResumeState(cwd: string): boolean {
+  const filePath = stateFilePath(cwd);
+  if (!fs.existsSync(filePath)) return false;
+  try {
+    const raw = fs.readFileSync(filePath, "utf-8");
+    const parsed = JSON.parse(raw);
+    return parsed.version !== null && parsed.state != null;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Remove the on-disk state file.
+ */
+function clearState(cwd: string): void {
+  const filePath = stateFilePath(cwd);
+  try {
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    const tmpPath = filePath + ".tmp.";
+    const files = fs.readdirSync(path.dirname(filePath));
+    for (const f of files) {
+      if (f.startsWith("state.json.tmp.")) {
+        try { fs.unlinkSync(path.join(path.dirname(filePath), f)); } catch { /* ignore */ }
+      }
     }
+  } catch {
+    // ignore — state is ephemeral
   }
 }
 
@@ -1853,7 +2450,7 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
       edge(`${title}  ${muted("│")}  ${th.fg(sc, statusIcon + " " + statusText)}`),
       edge(`[░░░░░░░░░░░░░░░░░░░░] 0%  ${muted("│")}  ${agentCount} agents configured  │  ${elapsed}`),
       followLine ? edge(th.fg("dim", `  ${followLine}`)) : edge(muted("  last: idle — no active work yet")),
-      edge(`${th.fg("dim", `● ${fleetState.reviewIterations} reviews completed`)}  ${muted("│")}  ${muted(`Elapsed: ${elapsed}`)}`),
+      edge(`${th.fg("dim", `${buildWidgetReviewStatus(fleetState)}`)}  ${muted("│")}  ${muted(`Review time: ${elapsed}`)}`),
       edge(muted(`▸ fleet: ${formatTokens(fleetState.totalFleetTokens)}${followLine ? "  │  " + th.fg("dim", `followed: ${followedAgent.agent}`) : ""}`)),
     ];
   }
@@ -1905,8 +2502,11 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
     return `${name}(${inp}/${out})`;
   }).join("  │  ");
   const tokenLine = agentTokens
-    ? `▸ tokens: ${formatTokens(totalInput)}in / ${formatTokens(totalOutput)}out │ [${agentTokens}]`
-    : `▸ fleet: ${formatTokens(fleetState.totalFleetTokens)} tokens`;
+    ? `▸ fleet: ${formatTokens(totalInput)}in / ${formatTokens(totalOutput)}out  │  agents: [${agentTokens}]`
+    : `▸ fleet: ${formatTokens(fleetState.totalFleetTokens)} tokens (fleet total)  │  per-agent: none`;
+  const legendLine = agentTokens
+    ? `  ──  ${formatTokens(totalInput)}in / ${formatTokens(totalOutput)}out (fleet total)  │  per-agent breakdown in brackets`
+    : ``;
 
   if (fleetState.paused) {
     line3 = muted("  ⏸ PAUSED");
@@ -1984,9 +2584,10 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
     edge(`${th.fg("accent", "CARAVEL FLEET")}  ${muted("│")}  ${phaseLabel}  ${muted("│")}  ${th.fg(sColor, sIcon + " " + sText + failExplanation)}`),
     edge(`[${bar}] ${progress}%  ${muted("│")}  ${completedTasks}/${totalTasks} tasks  │  ${elapsed}`),
     edge(line3 + (followOutput ? followOutput : "")),
-    edge(`${th.fg("dim", `${fleetState.reviewIterations} reviews`)}  ${muted("│")}  ${muted(`Elapsed: ${elapsed}`)}`),
+    edge(`${th.fg("dim", `${buildWidgetReviewStatus(fleetState)}`)}  ${muted("│")}  ${muted(`Review time: ${elapsed}`)}`),
     edge(tokenLine + (followLine ? `  │  ${followLine}` : "")),
-  ];
+    legendLine ? edge(muted(legendLine)) : null,
+  ].filter(Boolean);
 }
 
 /**
@@ -2174,6 +2775,12 @@ async function runPhaseInternal(
   for (const task of phase.tasks) {
     if (task.status === "complete") continue;
 
+    // Check pause between tasks
+    if (fleetState.paused) {
+      saveState();
+      return `⏸ Phase "${phase.name}" paused before task "${task.agentName}". State saved to disk. Use resume to continue.`;
+    }
+
     const agentDef = allAgents.find((a) => a.name === task.agentName);
     if (!agentDef) {
       task.status = "failed";
@@ -2184,6 +2791,7 @@ async function runPhaseInternal(
     // Track per-agent token usage
     let agentInputTokens = 0;
     let agentOutputTokens = 0;
+    task.startedAt = Date.now();
 
     task.status = "running";
     fleetState.activeAgents = fleetState.activeAgents.map((a) =>
@@ -2228,7 +2836,19 @@ async function runPhaseInternal(
       if (now - lastProgressReport > 1000) {
         lastProgressReport = now;
         lastTokenCount = tokenCount ?? lastTokenCount;
-        onUpdate?.([{ type: "text", text: `  ▸ ${agentDef.name} (${agentDef.model || "unknown"}): ${truncate(chunk.slice(-60), 40)} [${formatTokens(lastTokenCount)} tokens]` }]);
+        const cleaned = cleanChunkText(chunk);
+        const taskIndex = phase.tasks.indexOf(task);
+        const elapsed = task.startedAt ? now - task.startedAt : 0;
+        const progressLine = formatTaskProgress(
+          taskIndex,
+          "running",
+          agentDef.name,
+          agentDef.model || "unknown",
+          lastTokenCount,
+          elapsed,
+          task.description,
+        );
+        onUpdate?.([{ type: "text", text: progressLine }]);
       }
       // Capture agent output for follow
       const buf = agentOutputBuffers.get(agentKey);
@@ -2304,6 +2924,12 @@ async function runReviewInternal(
 ): Promise<string> {
   const phase = fleetState.phases[phaseIdx];
   if (!phase) return "No phase to review";
+
+  // Check pause before starting review
+  if (fleetState.paused) {
+    saveState();
+    return `⏸ Review for phase "${phase.name}" paused. State saved to disk. Use resume to continue.`;
+  }
 
   const incompleteTasks = phase.tasks.filter((t) => t.status !== "complete");
   if (incompleteTasks.length === 0) {
@@ -3168,6 +3794,23 @@ export default function (pi: ExtensionAPI) {
     ctx.ui.notify("Caravel fleet initialized", "info");
   });
 
+  // ── Background mode: if launched with --bg-mode, load state and auto-start fleet ──
+  const bgModeIndex = process.argv.indexOf("--bg-mode");
+  if (bgModeIndex >= 0) {
+    // In bg-mode, we load state and begin auto-orchestration
+    // The pi process acts as a headless fleet executor
+    pi.on("session_start", async (_event: any, ctx: any) => {
+      const statePath = stateFilePath(ctx.cwd);
+      const hasState = fs.existsSync(statePath);
+      if (hasState) {
+        ctx.ui.notify(`BG-MODE: Loading fleet state from ${statePath}`, "info");
+      } else {
+        ctx.ui.notify("BG-MODE: No saved state found. Fleet idle.", "warning");
+      }
+      refreshWidget(ctx);
+    });
+  }
+
   pi.on("agent_end", async (event, ctx) => {
     const lastMsg = event.messages?.[event.messages.length - 1];
     if (lastMsg?.role === "assistant") {
@@ -3242,7 +3885,7 @@ export default function (pi: ExtensionAPI) {
 
   // ---- Commands ----
 
-  pi.registerCommand("fleet", {
+  pi.registerCommand("caravel-fleet", {
     description: "Toggle fleet widget bar visibility",
     handler: async (_args, ctx) => {
       widgetVisible = !widgetVisible;
@@ -3419,17 +4062,36 @@ export default function (pi: ExtensionAPI) {
 
   // ---- /go: auto-orchestrate all phases ----
 
-  pi.registerCommand("go", {
-    description: "Auto-orchestrate the fleet: run all phases sequentially with review between each",
+  pi.registerCommand("caravel-go", {
+    description: "Auto-orchestrate the fleet: run all phases sequentially with review between each. Pauses block execution until resumed.",
     handler: async (_args, ctx) => {
       if (fleetState.phases.length === 0) {
-        return { content: [{ type: "text", text: `Fleet is idle. No phases defined.\n\nTo start, either:\n  1. Use plan_project() to define phases, then call /go again\n  2. Describe your project in natural language and the planner agent will create the plan` }] };
+        return { content: [{ type: "text", text: `Fleet is idle. No phases defined.\n\nTo start, either:\n  1. Use plan_project() to define phases, then call /caravel-go again\n  2. Describe your project in natural language and the planner agent will create the plan` }] };
+      }
+
+      // Check if fleet is paused — if so, block and report
+      if (fleetState.paused) {
+        const savedPath = stateFilePath(ctx.cwd);
+        return {
+          content: [{ type: "text", text:
+            `⏸ Fleet is paused. Execution blocked.\n` +
+            `  State saved at: ${savedPath}\n` +
+            `  Use fleet_control(action="resume") to restore state and continue.`
+          }],
+          details: { paused: true, savedState: savedPath }
+        };
       }
 
       const results: string[] = [];
       let phaseIndex = fleetState.currentPhaseIndex;
 
       while (phaseIndex < fleetState.phases.length) {
+        // Check pause flag between phases
+        if (fleetState.paused) {
+          results.push(`⏸ Execution paused at phase ${phaseIndex + 1}. State saved to disk.`);
+          break;
+        }
+
         const phase = fleetState.phases[phaseIndex];
 
         if (phase.status === "complete") {
@@ -3451,6 +4113,12 @@ export default function (pi: ExtensionAPI) {
 
         const phaseResult = await runPhaseInternal(phaseIndex, ctx, undefined);
         results.push(phaseResult);
+
+        // Check if phase execution was paused mid-task
+        if (fleetState.paused) {
+          results.push(`⏸ Phase execution paused. Use /caravel-resume to continue.`);
+          break;
+        }
 
         const hasReviewableTasks = phase.tasks.some(
           (t) => t.status === "complete" || t.status === "needs_fix"
@@ -3669,6 +4337,20 @@ export default function (pi: ExtensionAPI) {
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      // ── Testability enforcement (blocks plan if criteria unmet) ──
+      const validation = enforceTestability(
+        params.phases.map((p) => ({
+          name: p.name,
+          tasks: p.tasks.map((t) => ({ id: generateId(), task: t.task })),
+        }))
+      );
+      if (!validation.allPassed) {
+        return {
+          content: [{ type: "text", text: validation.blockMessage! }],
+          details: { blocked: true, phaseCount: params.phases.length, taskCount: params.phases.reduce((s, p) => s + p.tasks.length, 0), failures: validation.allFailures },
+        };
+      }
+
       const phases: FleetPhase[] = params.phases.map((p) => ({
         id: generateId(),
         name: p.name,
@@ -3733,6 +4415,19 @@ export default function (pi: ExtensionAPI) {
         };
       }
 
+      // Check if fleet is paused — block execution
+      if (fleetState.paused) {
+        const savedPath = stateFilePath(ctx.cwd);
+        return {
+          content: [{ type: "text", text:
+            `⏸ Fleet is paused. Execution blocked.\n` +
+            `  State saved at: ${savedPath}\n` +
+            `  Use fleet_control(action="resume") to restore state and continue.`
+          }],
+          details: { paused: true, savedState: savedPath }
+        };
+      }
+
       const phase = fleetState.phases[idx]!;
       phase.status = "running";
       fleetState.currentPhaseIndex = idx;
@@ -3755,6 +4450,7 @@ export default function (pi: ExtensionAPI) {
         // Track per-agent token usage
         let agentInputTokens = 0;
         let agentOutputTokens = 0;
+        task.startedAt = Date.now();
 
         task.status = "running";
         fleetState.activeAgents = fleetState.activeAgents.map((a) =>
@@ -3787,7 +4483,19 @@ export default function (pi: ExtensionAPI) {
           if (now - lastProgressReport > 1000) {
             lastProgressReport = now;
             lastTokenCount = tokenCount ?? lastTokenCount;
-            onUpdate?.({ content: [{ type: "text", text: `  ▸ ${agentDef.name} (${agentDef.model || "unknown"}): ${truncate(chunk.slice(-60), 40)} [${formatTokens(lastTokenCount)} tokens]` }] });
+            const cleaned = cleanChunkText(chunk);
+            const taskIndex = phase.tasks.indexOf(task);
+            const elapsed = task.startedAt ? now - task.startedAt : 0;
+            const progressLine = formatTaskProgress(
+              taskIndex,
+              "running",
+              agentDef.name,
+              agentDef.model || "unknown",
+              lastTokenCount,
+              elapsed,
+              task.description,
+            );
+            onUpdate?.({ content: [{ type: "text", text: progressLine }] });
           }
           // Capture agent output for follow
           const buf2 = agentOutputBuffers.get(agentKey2);
@@ -4059,6 +4767,17 @@ Provide the complete corrected output with specific file changes. Address each i
       const tasksToReview = incompleteTasks.filter((t) => t.status === "complete" || t.status === "needs_fix");
       if (tasksToReview.length === 0) return { content: [{ type: "text", text: "No tasks ready for review" }], details: {} };
 
+      // Check pause before starting review
+      if (fleetState.paused) {
+        return {
+          content: [{ type: "text", text:
+            `⏸ Fleet is paused. Review blocked.\n` +
+            `  Use fleet_control(action="resume") to restore state and continue.`
+          }],
+          details: { paused: true }
+        };
+      }
+
       fleetState.reviewIterations++;
       const reviewType = params.reviewType ?? "full";
       saveState();
@@ -4100,6 +4819,17 @@ Provide the complete corrected output with specific file changes. Address each i
       let allApproved = true;
 
       for (const task of tasksToReview) {
+        // Check pause between tasks
+        if (fleetState.paused) {
+          saveState();
+          return {
+            content: [{ type: "text", text:
+              `⏸ Review paused at task "${task.agentName}". State saved to disk.`
+            }],
+            details: { paused: true, completedTasks: tasksToReview.indexOf(task), totalTasks: tasksToReview.length }
+          };
+        }
+
         task.reviewFeedback = "";
 
         if (codeResult) {
@@ -4196,9 +4926,9 @@ Provide the complete corrected output with specific file changes. Address each i
           content: [{
             type: "text",
             text: `Fleet is idle. No phases defined.
-Use /fleet to toggle the widget bar, or use plan_project to define phases.
+Use /caravel-fleet to toggle the widget bar, or use plan_project to define phases.
 
-Status: idle | Reviews: ${fleetState.reviewIterations} | Elapsed: ${formatDuration(Date.now() - fleetState.startTime)}`,
+Status: idle | Reviews: ${buildWidgetReviewStatus(fleetState)} | Review time: ${formatDuration(Date.now() - fleetState.startTime)}`,
           }],
           details: { phases: fleetState.phases, agents: fleetState.activeAgents },
         };
@@ -4227,6 +4957,81 @@ Status: idle | Reviews: ${fleetState.reviewIterations} | Elapsed: ${formatDurati
     },
 
     promptSnippet: "Query fleet status and progress",
+  });
+
+  // ---- /caravel-pause: Pause fleet execution ----
+
+  pi.registerCommand("caravel-pause", {
+    description: "Pause fleet execution. Saves state to disk, blocks all execution (go, run_phase, reviews), and shows progress. Use /caravel-resume to restore state and continue.",
+    handler: async (_args, ctx) => {
+      if (fleetState.phases.length === 0) {
+        return { content: [{ type: "text", text: "Fleet is idle. Nothing to pause." }] };
+      }
+      if (fleetState.paused) {
+        return { content: [{ type: "text", text: "Fleet is already paused." }] };
+      }
+      // Save state before pausing
+      saveState();
+      fleetState.paused = true;
+      refreshWidget(ctx);
+      const phaseName = fleetState.currentPhaseIndex < fleetState.phases.length
+        ? fleetState.phases[fleetState.currentPhaseIndex].name
+        : "none";
+      const savedTasks = fleetState.phases.reduce((s, p) => s + p.tasks.filter((t) => t.status === "complete").length, 0);
+      const totalTasks = fleetState.phases.reduce((s, p) => s + p.tasks.length, 0);
+      return {
+        content: [{ type: "text", text:
+          `⏸ Fleet paused.\n` +
+          `  State saved to: ${stateFilePath(ctx.cwd)}\n` +
+          `  Current phase: ${phaseName}\n` +
+          `  Progress: ${savedTasks}/${totalTasks} tasks complete\n` +
+          `  All execution blocked until resumed.\n` +
+          `  Use /caravel-resume to restore state and continue from this exact point.`
+        }],
+        details: { paused: true, saved: true, phase: phaseName, completedTasks: savedTasks, totalTasks }
+      };
+    },
+  });
+
+  // ---- /caravel-resume: Resume fleet execution ----
+
+  pi.registerCommand("caravel-resume", {
+    description: "Resume fleet execution. Loads saved state from disk (if available), clears pause flag, and continues from the exact point of pause. Use /caravel-pause to pause first.",
+    handler: async (_args, ctx) => {
+      if (!fleetState.paused) {
+        return { content: [{ type: "text", text: "Fleet is not paused." }] };
+      }
+      // Load saved state from disk to ensure we resume from a known good checkpoint
+      const loaded = loadState(ctx);
+      fleetState.paused = false;
+      refreshWidget(ctx);
+      saveState(); // Save the cleared pause flag
+      const phaseIdx = fleetState.currentPhaseIndex;
+      const phaseName = phaseIdx < fleetState.phases.length ? fleetState.phases[phaseIdx].name : "none";
+      const savedTasks = fleetState.phases.reduce((s, p) => s + p.tasks.filter((t) => t.status === "complete").length, 0);
+      const totalTasks = fleetState.phases.reduce((s, p) => s + p.tasks.length, 0);
+      if (!loaded) {
+        return {
+          content: [{ type: "text", text:
+            `▶ Fleet resumed (no saved state found).\n` +
+            `  Current phase: ${phaseName}\n` +
+            `  Execution continues from current point.\n` +
+            `  To use save/resume: pause mid-execution to create a checkpoint first.`
+          }],
+          details: { paused: false, loaded: false, phase: phaseName }
+        };
+      }
+      return {
+        content: [{ type: "text", text:
+          `▶ Fleet resumed. State loaded from disk.\n` +
+          `  State file: ${stateFilePath(ctx.cwd)}\n` +
+          `  Current phase: ${phaseName}\n` +
+          `  Progress: ${savedTasks}/${totalTasks} tasks complete\n` +
+          `  Execution continues from the exact point of pause.`
+        }],
+        details: { paused: false, loaded: true, phase: phaseName, completedTasks: savedTasks, totalTasks, stateFile: stateFilePath(ctx.cwd) }
+      };
+    },
   });
 
   // ---- /diagnose: fleet error diagnosis ----
@@ -4282,7 +5087,7 @@ Status: idle | Reviews: ${fleetState.reviewIterations} | Elapsed: ${formatDurati
 
       // ── Quick commands ──
       response += `${section("Quick Commands")}\n`;
-      response += `  ${th.fg("dim", "→")} /fleet — Toggle widget visibility\n`;
+      response += `  ${th.fg("dim", "→")} /caravel-fleet — Toggle widget visibility\n`;
       response += `  ${th.fg("dim", "→")} fleet_status — Query current state\n`;
       if (diag.affectedPhases.length > 0) {
         const lastFailedIdx = fleetState.phases.indexOf(diag.affectedPhases[diag.affectedPhases.length - 1]);
@@ -4349,7 +5154,7 @@ Status: idle | Reviews: ${fleetState.reviewIterations} | Elapsed: ${formatDurati
       response += `  ${th.fg("dim", "→")} ${diag.overallAction}\n\n`;
 
       response += `${section("Quick Commands")}\n`;
-      response += `  ${th.fg("dim", "→")} /fleet — Toggle widget visibility\n`;
+      response += `  ${th.fg("dim", "→")} /caravel-fleet — Toggle widget visibility\n`;
       response += `  ${th.fg("dim", "→")} fleet_status — Query current state\n`;
       if (diag.affectedPhases.length > 0) {
         response += `  ${th.fg("dim", "→")} fleet_control(action="reset") — Reset fleet state\n`;
@@ -4379,14 +5184,60 @@ Status: idle | Reviews: ${fleetState.reviewIterations} | Elapsed: ${formatDurati
 
     async execute(_toolCallId, params, _signal, onUpdate, ctx) {
       switch (params.action) {
-        case "pause":
+        case "pause": {
+          // Save state before pausing so we can resume exactly where we left off
+          saveState();
           fleetState.paused = true;
           refreshWidget(ctx);
-          return { content: [{ type: "text", text: "Fleet paused" }], details: { paused: true } };
-        case "resume":
+          const phaseName = fleetState.currentPhaseIndex < fleetState.phases.length
+            ? fleetState.phases[fleetState.currentPhaseIndex].name
+            : "none";
+          const savedTasks = fleetState.phases.reduce((s, p) => s + p.tasks.filter((t) => t.status === "complete").length, 0);
+          const totalTasks = fleetState.phases.reduce((s, p) => s + p.tasks.length, 0);
+          return {
+            content: [{ type: "text", text:
+              `⏸ Fleet paused.\n` +
+              `  State saved to disk.\n` +
+              `  Current phase: ${phaseName}\n` +
+              `  Progress: ${savedTasks}/${totalTasks} tasks complete\n` +
+              `  Use resume to continue from this exact point.`
+            }],
+            details: { paused: true, saved: true, phase: phaseName, completedTasks: savedTasks, totalTasks }
+          };
+        }
+        case "resume": {
+          // Load saved state from disk to ensure we resume from a known good checkpoint
+          const loaded = loadState(ctx);
           fleetState.paused = false;
           refreshWidget(ctx);
-          return { content: [{ type: "text", text: "Fleet resumed" }], details: { paused: false } };
+          saveState(); // Save the cleared pause flag
+          if (!loaded) {
+            return {
+              content: [{ type: "text", text:
+                `⚠️ Resume: No saved state file found. Starting fresh.\n\n` +
+                `To use pause/resume:\n` +
+                `  1. Call fleet_control(action="pause") mid-execution\n` +
+                `  2. State is saved to .caravel/state.json\n` +
+                `  3. Call fleet_control(action="resume") to restore exact state\n` +
+                `  4. Execution continues from the exact point of pause`
+              }],
+              details: { paused: false, loaded: false, reason: "no_saved_state" }
+            };
+          }
+          const phaseIdx = fleetState.currentPhaseIndex;
+          const phaseName = phaseIdx < fleetState.phases.length ? fleetState.phases[phaseIdx].name : "none";
+          const savedTasks = fleetState.phases.reduce((s, p) => s + p.tasks.filter((t) => t.status === "complete").length, 0);
+          const totalTasks = fleetState.phases.reduce((s, p) => s + p.tasks.length, 0);
+          return {
+            content: [{ type: "text", text:
+              `▶ Fleet resumed. State loaded from disk.\n` +
+              `  Current phase: ${phaseName}\n` +
+              `  Progress: ${savedTasks}/${totalTasks} tasks complete\n` +
+              `  Execution will continue from the paused point.`
+            }],
+            details: { paused: false, loaded: true, phase: phaseName, completedTasks: savedTasks, totalTasks, loadedFrom: stateFilePath(ctx.cwd) }
+          };
+        }
         case "skip":
           if (fleetState.currentPhaseIndex < fleetState.phases.length) {
             fleetState.phases[fleetState.currentPhaseIndex].status = "complete";
@@ -4428,10 +5279,26 @@ Status: idle | Reviews: ${fleetState.reviewIterations} | Elapsed: ${formatDurati
           if (fleetState.phases.length === 0) {
             return { content: [{ type: "text", text: "Fleet is idle. No phases defined. Use plan_project() first." }], details: {} };
           }
+          // Check if fleet is paused
+          if (fleetState.paused) {
+            return {
+              content: [{ type: "text", text:
+                `⏸ Fleet is paused. Execution blocked.\n` +
+                `  Use fleet_control(action="resume") to restore state and continue.`
+              }],
+              details: { paused: true }
+            };
+          }
           const results: string[] = [];
           let phaseIndex = fleetState.currentPhaseIndex;
 
           while (phaseIndex < fleetState.phases.length) {
+            // Check pause flag between phases
+            if (fleetState.paused) {
+              results.push(`⏸ Execution paused at phase ${phaseIndex + 1}. State saved to disk.`);
+              break;
+            }
+
             const phase = fleetState.phases[phaseIndex];
 
             if (phase.status === "complete") {
@@ -4454,6 +5321,12 @@ Status: idle | Reviews: ${fleetState.reviewIterations} | Elapsed: ${formatDurati
             const phaseResult = await runPhaseInternal(phaseIndex, ctx, signal, onUpdate as any);
             results.push(phaseResult);
 
+            // Check if phase execution was paused mid-task
+            if (fleetState.paused) {
+              results.push(`⏸ Phase execution paused. Use /caravel-resume to continue.`);
+              break;
+            }
+
             const hasReviewableTasks = phase.tasks.some(
               (t) => t.status === "complete" || t.status === "needs_fix"
             );
@@ -4462,6 +5335,12 @@ Status: idle | Reviews: ${fleetState.reviewIterations} | Elapsed: ${formatDurati
               results.push(`\n🔍 Reviewing Phase ${phaseIndex + 1}...`);
               const reviewResult = await runReviewInternal(phaseIndex, ctx, onUpdate as any);
               results.push(reviewResult);
+
+              // Check pause between review and re-run
+              if (fleetState.paused) {
+                results.push(`⏸ Review paused. Use /caravel-resume to continue.`);
+                break;
+              }
 
               const phaseStillIncomplete = phase.tasks.some(
                 (t) => t.status !== "complete"
@@ -4492,12 +5371,94 @@ Status: idle | Reviews: ${fleetState.reviewIterations} | Elapsed: ${formatDurati
 
           return { content: [{ type: "text", text: results.join("\n") }], details: { completed: true } };
         }
+        // ── Background process management ──
+        case "bg_start": {
+          const bg = getBgManager();
+          bg.setCwd(ctx.cwd);
+          const result = await bg.startBackground(ctx);
+          return {
+            content: [{ type: "text", text: result.message }],
+            details: { success: result.success, state: bg.getState() },
+          };
+        }
+        case "bg_stop": {
+          const bg = getBgManager();
+          const result = await bg.stopBackground();
+          return {
+            content: [{ type: "text", text: result.message }],
+            details: { success: result.success },
+          };
+        }
+        case "bg_export": {
+          const bg = getBgManager();
+          const result = await bg.exportToBackground();
+          return {
+            content: [{ type: "text", text: result.message }],
+            details: { success: result.success },
+          };
+        }
+        case "migrate_to_zfs": {
+          const bg = getBgManager();
+          bg.setCwd(ctx.cwd);
+          const result = await bg.migrateToZFS(ctx);
+          return {
+            content: [{ type: "text", text: result.message }],
+            details: { success: result.success, state: bg.getState() },
+          };
+        }
+        case "bg_status": {
+          const bg = getBgManager();
+          const state = bg.getState();
+          const zfs = ensureZFS();
+          const zfsState = zfs.getFleetState();
+          const totalTasks = fleetState.phases.reduce((s, p) => s + p.tasks.length, 0);
+          const completedTasks = fleetState.phases.reduce((s, p) => s + p.tasks.filter((t) => t.status === "complete").length, 0);
+          const elapsed = state.startedAt > 0 ? formatDuration(Date.now() - state.startedAt) : "N/A";
+          const lines: string[] = [
+            "╔═══════════════════════════════════════════════════════════╗",
+            "║  BACKGROUND FLEET STATUS                                  ║",
+            "╠═══════════════════════════════════════════════════════════╣",
+          ];
+          // Background state
+          lines.push(`║  ── Background Process ──                                ║`);
+          lines.push(`║    Running: ${`${state.running ? "✓ yes" : "○ no"}`.padEnd(39)}║`);
+          lines.push(`║    PID: ${String(state.pid ?? "none").padEnd(39)}║`);
+          lines.push(`║    Started: ${new Date(state.startedAt).toISOString().padEnd(39)}║`);
+          lines.push(`║    Active: ${elapsed.padEnd(39)}║`);
+          lines.push(`║    State file: ${state.stateFile.padEnd(34)}║`);
+          lines.push("║");
+          // ZFS state
+          lines.push(`║  ── ZFS Session ──                                       ║`);
+          lines.push(`║    Available: ${`${zfsState.zellijAvailable ? "✓ yes" : "○ no"}`.padEnd(39)}║`);
+          lines.push(`║    Session: ${zfsState.sessionName.padEnd(39)}║`);
+          lines.push(`║    Panes: ${zfsState.activePanes} active / ${zfsState.exitedPanes} exited${"".padEnd(26)}║`);
+          lines.push("║");
+          // Fleet state
+          lines.push(`║  ── Fleet Progress ──                                    ║`);
+          if (fleetState.phases.length === 0) {
+            lines.push(`║    Status: idle                                          ║`);
+          } else {
+            const currentPhase = fleetState.phases[fleetState.currentPhaseIndex];
+            const phaseLabel = currentPhase
+              ? `P${fleetState.currentPhaseIndex + 1}/${fleetState.phases.length}: ${currentPhase.name}`
+              : "No active phase";
+            lines.push(`║    Phase: ${phaseLabel.padEnd(39)}║`);
+            lines.push(`║    Progress: ${`${completedTasks}/${totalTasks} tasks`.padEnd(39)}║`);
+            const progress = totalTasks > 0 ? `${Math.round((completedTasks / totalTasks) * 100)}%` : "0%";
+            lines.push(`║    Completed: ${progress.padEnd(39)}║`);
+          }
+          lines.push("╚═══════════════════════════════════════════════════════════╝");
+          return {
+            content: [{ type: "text", text: lines.join("\n") }],
+            details: { bgState: state, zfsState, fleetProgress: { totalTasks, completedTasks, totalPhases: fleetState.phases.length, currentPhaseIndex: fleetState.currentPhaseIndex } },
+          };
+        }
         default:
           return { content: [{ type: "text", text: `Unknown action: ${params.action}` }], details: {} };
       }
     },
 
-    promptSnippet: "Control fleet execution: pause, resume, skip, next, reset, or go",
+    promptSnippet: "Control fleet execution: pause, resume, skip, next, reset, go, bg_start, bg_stop, bg_export, migrate_to_zfs, bg_status",
   });
 
   // ============================================================================
@@ -4728,8 +5689,8 @@ Status: idle | Reviews: ${fleetState.reviewIterations} | Elapsed: ${formatDurati
       const elapsed = formatDuration(Date.now() - (fleetState.startTime || Date.now()));
 
       lines.push("║  Fleet State:                                             ║");
-      lines.push(`║    Phases: ${fleetState.currentPhaseIndex + 1}/${fleetState.phases.length}  │  Progress: ${progress.padEnd(6)}  │  Elapsed: ${elapsed.padEnd(10)}║`);
-      lines.push(`║    Tasks: ${completedTasks}/${totalTasks}  │  Reviews: ${fleetState.reviewIterations}  │  Tokens: ${formatTokens(fleetState.totalFleetTokens).padEnd(10)}║`);
+      lines.push(`║    Phases: ${fleetState.currentPhaseIndex + 1}/${fleetState.phases.length}  │  Progress: ${progress.padEnd(6)}  │  Review time: ${elapsed.padEnd(10)}║`);
+      lines.push(`║    Tasks: ${completedTasks}/${totalTasks}  │  Reviews: ${buildWidgetReviewStatus(fleetState)}  │  Tokens: ${formatTokens(fleetState.totalFleetTokens).padEnd(10)}║`);
       if (fleetState.paused) lines.push(`║    ⚠️  PAUSED                                              ║`);
       lines.push("║");
       lines.push("║  Commands:                                                ║");
@@ -4982,8 +5943,8 @@ Status: idle | Reviews: ${fleetState.reviewIterations} | Elapsed: ${formatDurati
           : "dim";
 
         lines.push(`║    ${sIcon} ${sText} ${phaseLabel.padEnd(44)}║`);
-        lines.push(`║    Progress: ${progress.padEnd(6)}  │  Tasks: ${completedTasks}/${totalTasks}  │  Elapsed: ${elapsed.padEnd(10)}║`);
-        lines.push(`║    Reviews: ${fleetState.reviewIterations}  │  Tokens: ${formatTokens(fleetState.totalFleetTokens).padEnd(27)}║`);
+        lines.push(`║    Progress: ${progress.padEnd(6)}  │  Tasks: ${completedTasks}/${totalTasks}  │  Review time: ${elapsed.padEnd(10)}║`);
+        lines.push(`║    Reviews: ${buildWidgetReviewStatus(fleetState)}  │  Tokens: ${formatTokens(fleetState.totalFleetTokens).padEnd(27)}║`);
         if (fleetState.paused) lines.push(`║    ⚠️  PAUSED                                          ║`);
       }
       lines.push("║");
@@ -5038,8 +5999,8 @@ Status: idle | Reviews: ${fleetState.reviewIterations} | Elapsed: ${formatDurati
       lines.push(`║    /zellij-follow   — Follow agent output               ║`);
       lines.push(`║    /zellij-status   — This overview                     ║`);
       lines.push(`║    /follow <agent>  — Follow agent (general)            ║`);
-      lines.push(`║    /fleet           — Toggle widget bar                  ║`);
-      lines.push(`║    /go              — Auto-orchestrate all phases        ║`);
+      lines.push(`║    /caravel-fleet   — Toggle widget bar                  ║`);
+      lines.push(`║    /caravel-go      — Auto-orchestrate all phases        ║`);
       lines.push(`║    /diagnose        — Diagnose errors                    ║`);
       if (fleetState.phases.length > 0) {
         lines.push(`║    fleet_status      — Fleet status query               ║`);
@@ -5176,6 +6137,121 @@ Status: idle | Reviews: ${fleetState.reviewIterations} | Elapsed: ${formatDurati
       fs.writeFileSync(kdlPath, kdl, "utf-8");
       return {
         content: [{ type: "text", text: `Fleet layout saved to: ${kdlPath}\n\n${kdl}` }],
+      };
+    },
+  });
+
+  // ============================================================================
+  // /bg-* commands — Background process management
+  // ============================================================================
+
+  // ---- /bg-start: Start fleet in background mode ----
+
+  pi.registerCommand("bg-start", {
+    description: "Save current fleet state and launch it as a detached background process. The parent pi process can then exit while the fleet continues running. Use /bg-status to monitor progress. When pi is restarted, state is loaded from the saved checkpoint.",
+    handler: async (_args, ctx) => {
+      const bg = getBgManager();
+      bg.setCwd(ctx.cwd);
+      const result = await bg.startBackground(ctx);
+      return {
+        content: [{ type: "text", text: result.message }],
+        details: { success: result.success, state: bg.getState() },
+      };
+    },
+  });
+
+  // ---- /bg-stop: Stop the background fleet ----
+
+  pi.registerCommand("bg-stop", {
+    description: "Stop the background fleet process. Fleet state is preserved in state.json for resumption. Use /bg-start to relaunch.",
+    handler: async (_args, ctx) => {
+      const bg = getBgManager();
+      const result = await bg.stopBackground();
+      return {
+        content: [{ type: "text", text: result.message }],
+        details: { success: result.success },
+      };
+    },
+  });
+
+  // ---- /bg-migrate: Migrate running fleet to ZFS ----
+
+  pi.registerCommand("bg-migrate", {
+    description: "Checkpoint the current fleet state, create a ZFS session with agent panes, and migrate monitoring to the ZFS floating status bar. Requires Zellij to be installed.",
+    handler: async (_args, ctx) => {
+      const bg = getBgManager();
+      bg.setCwd(ctx.cwd);
+      const result = await bg.migrateToZFS(ctx);
+      return {
+        content: [{ type: "text", text: result.message }],
+        details: { success: result.success, state: bg.getState() },
+      };
+    },
+  });
+
+  // ---- /bg-export: Export ZFS fleet back to background mode ----
+
+  pi.registerCommand("bg-export", {
+    description: "Stop the ZFS fleet session and spawn a new background process to continue from the saved checkpoint. Use when you want to stop monitoring via ZFS but keep the fleet running.",
+    handler: async (_args, ctx) => {
+      const bg = getBgManager();
+      bg.setCwd(ctx.cwd);
+      const result = await bg.exportToBackground();
+      return {
+        content: [{ type: "text", text: result.message }],
+        details: { success: result.success },
+      };
+    },
+  });
+
+  // ---- /bg-status: Show background fleet status ----
+
+  pi.registerCommand("bg-status", {
+    description: "Show comprehensive background fleet status: process state, ZFS session status, and fleet progress.",
+    handler: async (_args, ctx) => {
+      const bg = getBgManager();
+      bg.setCwd(ctx.cwd);
+      const state = bg.getState();
+      const zfs = ensureZFS();
+      const zfsState = zfs.getFleetState();
+      const totalTasks = fleetState.phases.reduce((s, p) => s + p.tasks.length, 0);
+      const completedTasks = fleetState.phases.reduce((s, p) => s + p.tasks.filter((t) => t.status === "complete").length, 0);
+      const elapsed = state.startedAt > 0 ? formatDuration(Date.now() - state.startedAt) : "N/A";
+
+      const lines: string[] = [
+        "╔═══════════════════════════════════════════════════════════╗",
+        "║  BACKGROUND FLEET STATUS                                  ║",
+        "╠═══════════════════════════════════════════════════════════╣",
+      ];
+      lines.push(`║  ── Background Process ──                                ║`);
+      lines.push(`║    Running: ${`${state.running ? "✓ yes" : "○ no"}`.padEnd(39)}║`);
+      lines.push(`║    PID: ${String(state.pid ?? "none").padEnd(39)}║`);
+      lines.push(`║    Started: ${new Date(state.startedAt).toISOString().padEnd(39)}║`);
+      lines.push(`║    Active: ${elapsed.padEnd(39)}║`);
+      lines.push(`║    State file: ${state.stateFile.padEnd(34)}║`);
+      lines.push("║");
+      lines.push(`║  ── ZFS Session ──                                       ║`);
+      lines.push(`║    Available: ${`${zfsState.zellijAvailable ? "✓ yes" : "○ no"}`.padEnd(39)}║`);
+      lines.push(`║    Session: ${zfsState.sessionName.padEnd(39)}║`);
+      lines.push(`║    Panes: ${zfsState.activePanes} active / ${zfsState.exitedPanes} exited${"".padEnd(26)}║`);
+      lines.push("║");
+      lines.push(`║  ── Fleet Progress ──                                    ║`);
+      if (fleetState.phases.length === 0) {
+        lines.push(`║    Status: idle                                          ║`);
+      } else {
+        const currentPhase = fleetState.phases[fleetState.currentPhaseIndex];
+        const phaseLabel = currentPhase
+          ? `P${fleetState.currentPhaseIndex + 1}/${fleetState.phases.length}: ${currentPhase.name}`
+          : "No active phase";
+        lines.push(`║    Phase: ${phaseLabel.padEnd(39)}║`);
+        lines.push(`║    Progress: ${`${completedTasks}/${totalTasks} tasks`.padEnd(39)}║`);
+        const progress = totalTasks > 0 ? `${Math.round((completedTasks / totalTasks) * 100)}%` : "0%";
+        lines.push(`║    Completed: ${progress.padEnd(39)}║`);
+      }
+      lines.push("╚═══════════════════════════════════════════════════════════╝");
+      return {
+        content: [{ type: "text", text: lines.join("\n") }],
+        details: { bgState: state, zfsState, fleetProgress: { totalTasks, completedTasks, totalPhases: fleetState.phases.length, currentPhaseIndex: fleetState.currentPhaseIndex } },
       };
     },
   });

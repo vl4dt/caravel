@@ -13,6 +13,15 @@ description: Structured code review skill for the tech-lead agent. Use when revi
 - [ ] Does it follow existing code patterns in the project?
 - [ ] Are error cases properly handled?
 
+### Logic Error Detection (CRITICAL — blocks release)
+- [ ] **Missing imports**: All imported modules/files exist and paths are correct
+- [ ] **Missing definitions**: No undefined variables, functions, classes, or types referenced
+- [ ] **Missing implementations**: No stub functions, placeholder implementations, or `// TODO` remnants
+- [ ] **Unreachable branches**: No dead code or branches that can never execute
+- [ ] **Type mismatches**: No type errors — function signatures match calls, return types match
+- [ ] **Missing error handling**: No unhandled promises, missing try/catch for async code
+- [ ] **Missing definitions**: All referenced variables are declared in scope
+
 ### Security
 - [ ] No hardcoded secrets or credentials
 - [ ] Input validation where applicable
@@ -112,6 +121,20 @@ During execution, emit structured progress messages for each review category so 
 - N nice-to-have issues
 - Overall quality assessment
 ```
+
+## Gate Check (Pre-Completion Verification)
+
+**Before marking any task as complete, verify all of the following:**
+
+1. **All referenced files exist** — grep for imports, requires, `from`, `import`
+2. **No TODO/stub remnants** — search for `TODO`, `FIXME`, `PLACEHOLDER`, `stub`, `// @ts-ignore`
+3. **No missing definitions** — all imported names resolve to actual exports
+4. **No undefined variables** — all variables are declared before use
+5. **No unreachable code** — all branches have valid paths
+6. **All imports are valid** — module resolution works
+7. **No placeholder implementations** — all functions have real implementations
+
+If ANY gate check fails, the task is NOT complete and must be returned to the developer.
 
 ## Review Guidelines
 

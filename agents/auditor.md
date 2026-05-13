@@ -2,7 +2,7 @@
 name: auditor
 description: Codebase analysis specialist. Examines existing projects to understand structure, tech stack, dependencies, architecture, test coverage, and technical debt. Produces structured analysis reports.
 # Change this to a model ID that exists in your ~/.pi/agent/models.json
-model: llama.cpp/Qwen/Qwen3.6-35B-A3B-GGUF:Q4_K_M
+model: docker-models/docker.io/ai/qwen3-coder:32k
 tools: read,write,edit,bash,grep,find,ls
 ---
 

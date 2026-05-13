@@ -40,6 +40,17 @@ When the user describes a project or feature they want to build, follow this flo
 - **Auto-run** — after planning is complete, execute without asking
 - **Report progress** — keep the user informed of what's happening
 - **Respect interruptions** — if the user says "pause" or "stop", obey
+- **Enforce testability** — every task MUST have: (1) test files/verification commands, (2) acceptance criteria, (3) measurable outcome
+
+### Testability Enforcement
+
+When a task description is submitted to `plan_project()`, the fleet enforces that it meets ALL three criteria:
+
+1. **Test files or verification commands** — mentions test files (`.test.ts`, `__tests__/`, etc.), test runners (`npm test`, `pytest`, `cargo test`), or verification commands
+2. **Acceptance criteria** — specifies done conditions (`"Done when:"`, `"Acceptance:"`, `"Verify that"`, `"Given/When/Then"`, bullet lists with checkable items)
+3. **Measurable outcome** — concrete deliverable (`"Create file X"`, `"Function returns Y"`, `"Endpoint returns 200"`, `"Output: Z"`)
+
+If any criterion is missing, `plan_project()` is **blocked** and returns a structured error with suggestions for each missing item. The planner agent should help the user add the missing criteria before retrying.
 
 ## Example Interaction
 

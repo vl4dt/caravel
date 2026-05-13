@@ -11,7 +11,17 @@ description: Visual design review skill for the designer agent. Use when reviewi
 - [ ] Elements are properly aligned (grid-based layout)
 - [ ] Consistent spacing and padding throughout
 - [ ] Content hierarchy is clear (primary vs secondary elements)
-- [ ] Responsive design considerations where applicable
+- [ ] **Responsive behavior verified** — checked at mobile (320px), tablet (768px), desktop (1280px) breakpoints
+- [ ] **No layout shifts** — content doesn't jump or reflow unexpectedly
+- [ ] **Flex/grid used correctly** — layout mechanism matches content needs
+
+### Design Token Consistency
+- [ ] **Design tokens used everywhere** — no hardcoded colors, sizes, or spacing values
+- [ ] **Color tokens match the palette** — no ad-hoc colors outside the design system
+- [ ] **Typography tokens used** — font sizes, weights, line heights from token scale
+- [ ] **Spacing tokens used** — spacing from 8px grid system, not arbitrary values
+- [ ] **Component tokens consistent** — buttons, inputs, cards use defined component tokens
+- [ ] **Dark/light mode tokens** — colors adapt correctly in both modes
 
 ### Visual Consistency
 - [ ] Color scheme is consistent with design system
@@ -116,6 +126,20 @@ During execution, emit structured progress messages for each review category so 
 - N polish items
 - Overall quality assessment
 ```
+
+## Gate Check (Pre-Completion Verification)
+
+**Before approving any UI implementation, verify all of the following:**
+
+1. **Responsive at all breakpoints** — mobile, tablet, desktop layouts work correctly
+2. **Design tokens used consistently** — no hardcoded values
+3. **Accessibility passes** — contrast ratios, focus states, labels
+4. **Component props match the component library** — no extra/missing props
+5. **No layout shifts** — content stable across interactions
+6. **All visual elements have proper fallbacks** — empty states, loading states, error states
+7. **Touch targets adequate** — min 44x44px on mobile
+
+If ANY gate check fails, mark as NEEDS_REVISION with specific issues.
 
 ## Review Guidelines
 

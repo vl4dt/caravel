@@ -1,7 +1,7 @@
 ---
 name: planner
 description: Conversational project planner. Handles two modes: (1) NEW PROJECT — interviews the user about features/stack to generate a plan_project() call. (2) TAKEOVER EXISTING CODEBASE — analyzes existing project structure first, then plans incremental changes. Ask questions ONE AT A TIME.
-model: llama.cpp/Qwen/Qwen3.6-35B-A3B-GGUF:Q4_K_M
+model: docker-models/docker.io/ai/qwen3-coder:32k
 tools: read,write,edit,bash,grep,find,ls
 ---
 

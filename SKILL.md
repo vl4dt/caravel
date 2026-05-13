@@ -9,13 +9,13 @@ allowed-tools: plan_project,run_phase,review_task,fleet_control,fleet_status,fle
 ## Available Skills
 
 | Skill | Command | Purpose |
-|-------|---------|----------|
-| `analyze.md` | `/analyze` | Run codebase analysis → produces `ANALYSIS.md` with pre-flight scan, tech stack, dependencies, architecture, technical debt, and recommendations |
-| `plan.md` | `/plan` | Read `ANALYSIS.md` or `PROJECT-DESIGN.md` → produce `PLAN.md` with phases and tasks |
-| `progress.md` | — | Progress feedback templates for all phase types (analyze, plan, build, review) |
+|-------|---------|---------|
+| `analyze.md` | `/analyze` | Run codebase analysis → produces `ANALYSIS.md` |
+| `plan.md` | `/plan` | Read `ANALYSIS.md` or `PROJECT-DESIGN.md` → produce `PLAN.md` |
+| `progress.md` | — | Progress feedback templates for all phase types |
 | `fleet-orchestration.md` | — | Auto-orchestration guidance for the main agent |
-| `code-review.md` | — | Code review checklist for the tech-lead agent |
-| `design-review.md` | — | Design review checklist for the designer agent |
+| `code-review.md` | — | Code review checklist with logic error detection + gate checks for the tech-lead agent |
+| `design-review.md` | — | Design review checklist with design token consistency checks for the designer agent |
 | `zellij-fleet.md` | `/zellij-*` | ZFS user guide — workspace layout, keyboard shortcuts, follow mode, monitoring, and troubleshooting |
 
 ## Complete Workflow
@@ -23,19 +23,19 @@ allowed-tools: plan_project,run_phase,review_task,fleet_control,fleet_status,fle
 ### Scenario 1: Take Over an Existing Codebase
 
 ```
-analyze   →  /analyze  →  ANALYSIS.md  →  /plan  →  PLAN.md  →  /go  →  execute
+analyze   →  /analyze  →  ANALYSIS.md  →  /plan  →  PLAN.md  →  /caravel-go  →  execute
 ```
 
 1. **Analyze** — run `/analyze` to produce `ANALYSIS.md`
 2. **Plan** — run `/plan` to convert analysis into phases/tasks → `PLAN.md`
-3. **Execute** — run `/go` to auto-orchestrate the fleet
+3. **Execute** — run `/caravel-go` to auto-orchestrate the fleet
 4. **Monitor** — watch via widget bar or `fleet_status`
 
 ### Scenario 2: Start a New Project
 
 1. **Describe** what you want in natural language
 2. **Plan** — `plan_project()` to decompose into phases
-3. **Execute** — `/go` auto-orchestrates phases with review
+3. **Execute** — `/caravel-go` auto-orchestrates phases with review
 4. **Iterate** — fix review feedback, advance to next phase
 
 ### Scenario 3: ZFS Mode (Terminal Fleet)
@@ -84,6 +84,8 @@ Main Agent --> supervisor routing     |
 | **developer** | Coding, implementation, file manipulation |
 | **tech-lead** | Architecture, planning, code quality review |
 | **designer** | Visual review, UI analysis, design quality |
+| **documenter** | Documentation specialist — write, maintain, and update all project docs |
+| **planner** | Project planning, requirement gathering, task decomposition |
 
 Each agent's model is configurable in its `agents/*.md` file — works with any provider (local or cloud). The designer needs a vision-capable model (supports image input).
 
@@ -106,7 +108,7 @@ You respond:
    ```
    The planner will ask questions one at a time, then produce a `plan_project()` call.
 
-2. **If scope is clear** — Plan the project yourself using `plan_project`, then run `/go`:
+2. **If scope is clear** — Plan the project yourself using `plan_project`, then run `/caravel-go`:
    ```javascript
    plan_project({ name: "...", phases: [...] })
    fleet_control(action = "go")  // auto-runs all phases with review between each
@@ -121,16 +123,16 @@ User: "I want to add dark mode to this existing React app"
 You respond:
 1. **Analyze** — run `/analyze` to produce `ANALYSIS.md` with full codebase scan
 2. **Plan** — run `/plan` to convert analysis into phases/tasks → `PLAN.md`
-3. **Execute** — run `/go` to auto-orchestrate the fleet
+3. **Execute** — run `/caravel-go` to auto-orchestrate the fleet
 4. **Monitor** — watch progress via the widget bar or `fleet_status`
 
 If the user wants to jump straight to planning:
 1. **Plan** — `plan_project()` directly if scope is clear
-2. **Execute** — `/go` to run phases with review
+2. **Execute** — `/caravel-go` to run phases with review
 
-### The /go Command
+### The /caravel-go Command
 
-The `/go` command is your workhorse — it auto-orchestrates the fleet:
+The `/caravel-go` command is your workhorse — it auto-orchestrates the fleet:
 - Runs all phases sequentially
 - Triggers review between each phase
 - Auto-fixes review issues
@@ -170,6 +172,39 @@ The diagnosis covers:
 - **Review loop exhaustion** — when reviews fail repeatedly
 
 Each cause includes: severity level, affected phase/task, root cause explanation, and step-by-step fix instructions.
+
+## Fleet State Management
+
+### Pause / Resume
+
+```javascript
+fleet_control(action = "pause")   // Saves state to disk, blocks execution
+fleet_control(action = "resume")  // Loads saved state, unblocks execution
+```
+
+State survives process termination, system restart, and blackouts. On next `run_phase()` or `/caravel-go`, the saved state is auto-loaded.
+
+### Background Mode
+
+Launch the fleet as a detached background process that survives closing the terminal:
+
+```javascript
+fleet_control(action = "go")    // Start fleet in foreground
+// ...
+fleet_control(action = "pause") // Pause
+// Close terminal — fleet keeps running in background
+// Reopen terminal, run:
+fleet_control(action = "resume") // Reconnect
+```
+
+### ZFS Migration
+
+Fleet can migrate between modes at any time:
+- **Foreground → ZFS**: `/zellij-start`
+- **ZFS → Background**: `/bg-export`
+- **Background → ZFS**: `/zellij-start`
+
+All migrations preserve state via `state.json`.
 
 ## How It Works
 
@@ -221,6 +256,8 @@ Use `review_task(phaseIndex=N)` to submit completed tasks for a **two-stage revi
 
 **Stage 1: Code Review (Tech Lead)**
 - Correctness: implementation matches spec, edge cases handled
+- **Logic Error Detection**: missing imports, missing definitions, stub/placeholder code, unreachable branches, type mismatches, missing error handling
+- **Gate Check**: verifies all files exist, no TODOs/placeholders, imports valid, no stub implementations
 - Security: no hardcoded secrets, proper input validation
 - Performance: efficient algorithms, no unnecessary computation
 - Architecture: well-structured, follows patterns, maintainable
@@ -229,9 +266,10 @@ Use `review_task(phaseIndex=N)` to submit completed tasks for a **two-stage revi
 
 **Stage 2: Design Review (Designer)**
 - Layout & Structure: aligned, consistent spacing, clear hierarchy
-- Visual Consistency: colors, typography, component styles
+- **Design Token Consistency**: no hardcoded values, all tokens used correctly
+- **Responsive Verification**: checked at mobile/tablet/desktop breakpoints
 - Accessibility: color contrast, interactive states, readability
-- User Experience: intuitive navigation, user feedback
+- UX: intuitive navigation, user feedback
 - Polish: no glitches, proper edge states (empty, loading, error)
 
 If EITHER stage fails:
@@ -267,6 +305,8 @@ fleet_control(action = "go")         // Auto-run all remaining phases with revie
 - Use **developer** for: implementing features, writing code, fixing bugs, running tests/builds
 - Use **tech-lead** for: architecture decisions, code review, breaking down complex tasks, planning
 - Use **designer** for: reviewing UI screens, visual consistency, accessibility, design polish
+- Use **documenter** for: writing/updating documentation, maintaining README/DESIGN/PLAN accuracy
+- Use **planner** for: requirement gathering, task decomposition, project planning
 
 ## Task Description Best Practices
 
@@ -275,6 +315,7 @@ Be specific and actionable:
 - Reference existing code patterns in the project
 - Specify expected output format
 - Include any constraints or requirements
+- **Include testability criteria** (required by fleet enforcement — see T7 below)
 
 ### Good
 
@@ -290,6 +331,18 @@ Be specific and actionable:
 { agent: "developer", task: "Make a button component" }
 ```
 
+---
+
+### T7: Testability Enforcement
+
+Every task in `plan_project()` MUST satisfy three testability criteria:
+
+1. **Test files or verification commands** — e.g. `"Create src/Button.test.ts"`, `"Run npm test"`
+2. **Acceptance criteria** — e.g. `"Done when: renders primary color"`, `"Acceptance: handles props A, B"`
+3. **Measurable outcome** — e.g. `"Function returns boolean"`, `"Output: 200 status"`, `"File X is created"`
+
+If any criterion is missing, `plan_project()` is **blocked** with a structured error and suggestions for how to fix it. Help the user add the missing criteria before retrying.
+
 ## Review Loop Details
 
 The two-stage review is the quality gate of the fleet. Both stages must pass for a task to be approved.
@@ -301,6 +354,8 @@ Developer completes task
 +---+ Stage 1: Code Review (Tech Lead) +---------+
 | Correctness, Security, Performance,     |
 | Architecture, Code Quality, Testing     |
+| + Logic Error Detection (critical)      |
+| + Gate Check (files, imports, stubs)    |
 +-----------------------------------------+
     |
     +--> APPROVED --> Stage 2
@@ -314,6 +369,8 @@ Developer completes task
 +---+ Stage 2: Design Review (Designer) +-------+
 | Layout, Consistency, Accessibility,          |
 | UX, Polish, Visual Quality                  |
+| + Design Token Consistency                  |
+| + Responsive Verification                   |
 +---------------------------------------------+
     |
     +--> APPROVED --> task COMPLETE, next phase
@@ -325,6 +382,96 @@ Developer completes task
 
 Each task tracks: `codeReviewStatus` (approved/needs_fix) and `designReviewStatus` (approved/needs_fix).
 Both must be approved for the task to be complete.
+
+## Metrics Collection
+
+Caravel collects and exports metrics for analysis, reporting, and budgeting. See `notes/metrics-spec.md` for full spec.
+
+**Collected metrics:**
+- Task duration (per task, per agent)
+- Review cycle count per task
+- Tokens per agent (input/output)
+- Pass/fail rates per review stage
+- Phase timing and completion status
+
+**Export formats:** JSON (structured) and CSV (spreadsheet-compatible)
+
+```javascript
+import { createFleetMetrics } from "./metrics";
+const metrics = createFleetMetrics(fleetState, startTime);
+await metrics.saveToFile(process.cwd());
+// Saves to .caravel/metrics-{timestamp}.json and .caravel/metrics-{timestamp}.csv
+```
+
+## Integrations
+
+### Telegram Notifications
+
+Send task start/complete/failure messages, review results, and monitoring updates to a Telegram chat.
+
+```typescript
+import { sendTelegramNotification } from "./integrations/telegram";
+
+const config = {
+  botToken: "YOUR_BOT_TOKEN",
+  chatId: "-100XXXXXXXXXX",
+  enabled: true,
+  monitorMode: false,  // or true for read-only monitoring
+};
+
+await sendTelegramNotification(config, {
+  type: "task_complete",
+  content: "Task completed",
+  data: { task: "T3", agent: "developer", phase: "P1", durationMs: 45000 },
+});
+```
+
+### Linear Integration
+
+Sync tasks to Linear issues — create/update issues, sync status, webhooks.
+
+```typescript
+import { syncTaskToLinear } from "./integrations/linear";
+
+const config = {
+  apiKey: "lin_api_xxx",
+  teamId: "TEAM_ID",
+  projectId: "PROJECT_ID",
+  enabled: true,
+};
+
+await syncTaskToLinear(config, {
+  taskId: "t1",
+  phase: "P1",
+  agent: "developer",
+  description: "Create Button component",
+  status: "complete",
+});
+```
+
+### Plane Integration
+
+Sync tasks to Plane issues — same pattern as Linear but adapted to Plane's API.
+
+```typescript
+import { syncTaskToPlane } from "./integrations/plane";
+
+const config = {
+  apiKey: "api_key_xxx",
+  workspaceSlug: "my-workspace",
+  projectSlug: "my-project",
+  enabled: true,
+  issueTypeName: "Story",
+};
+
+await syncTaskToPlane(config, {
+  taskId: "t1",
+  phase: "P1",
+  agent: "developer",
+  description: "Create Button component",
+  status: "complete",
+});
+```
 
 ## ZFS Mode — Zellij Fleet Session
 
@@ -342,6 +489,7 @@ Caravel can run the fleet inside a dedicated [Zellij](https://zellij.dev) termin
 │                            │  │  agent grid        │  │
 │                            │  │  phase progress    │  │
 │                            │  │  token tracking    │  │
+│                            │  │  review status     │  │
 │                            │  └────────────────────┘  │
 └────────────────────────────┴──────────────────────────┘
 ```
@@ -396,12 +544,12 @@ Switch during execution: `zellij action switch-layout <name>`
 
 ---
 
-Toggle visibility with `/fleet`. The widget bar shows:
+Toggle visibility with `/caravel-fleet`. The widget bar shows:
 - **Line 1**: Top border `╔...╗`
 - **Line 2**: `CARAVEL FLEET` header + current status (IDLE/RUNNING/PAUSED/DONE/FAILED)
-- **Line 3**: Current phase + progress bar (e.g. `[████████░░░░░░░░] 40%`) + task count + elapsed time
+- **Line 3**: Current phase + progress bar (e.g. `[████████░░░░░░░░] 40%`] + task count + elapsed time
 - **Line 4**: Active agent action (e.g. `▸ running: bash → npm install`) or idle status
-- **Line 5**: Review count + elapsed time
+- **Line 5**: Review count (✓ approved / ○ pending) + Review time
 - **Line 6**: Bottom border `╚...╝`
 
 When idle (no phases):
@@ -422,8 +570,8 @@ When ZFS (Zellij Fleet Session) is active, the **floating status bar** replaces/
 ║  ● idle — waiting for work                               ║
 ║  ● idle — waiting for work                               ║
 ║  ● idle — waiting for work                               ║
-║  ▸ 12.5k / 3.2k  │  fleet: 45k tokens  │  2 reviews      ║
-║  Elapsed: 3m 42s  │  ZFS                                ║
+║  ▸ fleet total: 45k tokens  │  per-agent: 12.5k i / 3.2k o  │  2 ✓ 0 ○  ║
+║  Review time: 3m 42s  │  ZFS                                ║
 ╚══════════════════════════════════════════════════════════════╝
 ```
 
@@ -432,7 +580,8 @@ When ZFS (Zellij Fleet Session) is active, the **floating status bar** replaces/
 - **Agent grid**: All agents' statuses (running▸/idle●/error✗) in a compact row
 - **Phase info**: Progress bar, task count, elapsed time
 - **Per-agent detail**: Name, model, current task, token usage
-- **Token summary**: Per-agent input/output + fleet total
+- **Token summary**: Fleet total + per-agent input/output breakdown
+- **Review status**: ✓ approved / ○ pending per phase
 - **Auto-refresh**: Updates every 2 seconds
 
 ### ZFS Tools
