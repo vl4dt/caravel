@@ -245,6 +245,8 @@ interface StatusBarFleetSnapshot {
   lastActionAgo?: string;
   platform?: "windows" | "linux" | "macos" | "unix";
   platformShell?: string;
+  tokensPerSec: number;
+  etaSeconds: number;
 }
 
 const BAR_WIDTH = 80;
@@ -261,6 +263,20 @@ function formatTokenCount(count: number): string {
   if (count < 1000) return String(count);
   if (count < 10000) return `${(count / 1000).toFixed(1)}k`;
   return `${Math.round(count / 1000)}k`;
+}
+
+/** Format token rate: tokens/sec, e.g. "1.2k/s" or "42/s" */
+function formatTokenRate(tokensPerSec: number): string {
+  if (tokensPerSec < 10) return `${tokensPerSec}/s`;
+  if (tokensPerSec < 1000) return `${tokensPerSec}/s`;
+  return `${(tokensPerSec / 1000).toFixed(1)}k/s`;
+}
+
+/** Format elapsed time into a short string */
+function formatElapsedShort(ms: number): string {
+  if (ms < 60_000) return `${Math.floor(ms / 1000)}s`;
+  if (ms < 3600_000) return `${Math.floor(ms / 60_000)}m${Math.floor((ms % 60_000) / 1000)}s`;
+  return `${Math.floor(ms / 3600_000)}h${Math.floor((ms % 3600_000) / 60_000)}m`;
 }
 
 function progressBar(filled: number, total: number, width: number): string {
@@ -396,11 +412,15 @@ function buildFooter(snap: StatusBarFleetSnapshot): string {
   const designApproved = snap.phaseDesignReviewsApproved || 0;
   const designPending = snap.phaseDesignReviewsPending || 0;
   const reviewLabel = buildReviewStatusLabel(codeApproved, codePending, designApproved, designPending);
+  const throughputStr = snap.tokensPerSec > 0 ? `│ ${formatTokenRate(snap.tokensPerSec)}` : "";
+  const etaStr = snap.etaSeconds > 0 ? `│ ETA: ${formatElapsedShort(snap.etaSeconds * 1000)}` : "";
   const parts: string[] = [
     reviewLabel,
     `Review time: ${snap.elapsed}`,
     snap.zfsActive ? "ZFS" : "pi",
   ];
+  if (throughputStr) parts.push(throughputStr);
+  if (etaStr) parts.push(etaStr);
   if (snap.platform) parts.push(snap.platform);
   const content = parts.join("  │  ");
   return content;
@@ -435,7 +455,9 @@ export function renderCompactStatusBar(snap: StatusBarFleetSnapshot): string {
   const codePending = snap.phaseCodeReviewsPending || 0;
   const designApproved = snap.phaseDesignReviewsApproved || 0;
   const designPending = snap.phaseDesignReviewsPending || 0;
-  const tokenLine = `▸ ${formatTokenCount(snap.totalFleetTokens)} tokens (fleet total)  │  per-agent: ${formatTokenCount(snap.totalAgentInputTokens)}i / ${formatTokenCount(snap.totalAgentOutputTokens)}o  │  ${buildReviewStatusLabel(codeApproved, codePending, designApproved, designPending)}`;
+  const throughputStr = snap.tokensPerSec > 0 ? `│ ${formatTokenRate(snap.tokensPerSec)}` : "";
+  const etaStr = snap.etaSeconds > 0 ? `│ ETA: ${formatElapsedShort(snap.etaSeconds * 1000)}` : "";
+  const tokenLine = `▸ ${formatTokenCount(snap.totalFleetTokens)} tokens (fleet total)${throughputStr}${etaStr}  │  per-agent: ${formatTokenCount(snap.totalAgentInputTokens)}i / ${formatTokenCount(snap.totalAgentOutputTokens)}o  │  ${buildReviewStatusLabel(codeApproved, codePending, designApproved, designPending)}`;
   const elapsedLine = `Review time: ${snap.elapsed}`;
   const modeLine = snap.zfsActive ? "[ZFS]" : "[pi]";
   const header = `${snap.fleetName}  ${modeLine}  │  P${snap.currentPhaseIndex + 1}/${snap.totalPhases}`;
@@ -510,6 +532,13 @@ export function buildFleetSnapshot(opts: {
   }
   const totalInputTokens = opts.activeAgents.reduce((s, a) => s + (a.inputTokens || 0), 0);
   const totalOutputTokens = opts.activeAgents.reduce((s, a) => s + (a.outputTokens || 0), 0);
+  // Compute tokens/sec (only meaningful after ~5s of activity)
+  const elapsedSec = (now - opts.startTime) / 1000;
+  const tokensPerSec = elapsedSec > 5 ? Math.round(opts.totalFleetTokens / elapsedSec) : 0;
+  // Compute ETA based on remaining work and current throughput
+  const etaSeconds = elapsedSec > 5 && currentPhaseStatus !== "complete"
+    ? Math.round((opts.totalFleetTokens * 0.5) / tokensPerSec)  // rough: assume ~2x more tokens needed
+    : 0;
   return {
     zfsActive: opts.zfsActive, zfsSessionActive: opts.zfsSessionActive, fleetName: "CARAVEL FLEET",
     currentPhaseIndex: opts.currentPhaseIndex, totalPhases: opts.phases.length, currentPhaseName,
@@ -517,7 +546,7 @@ export function buildFleetSnapshot(opts: {
     agents: activeAgentEntries, allAgents: allAgentEntries, reviewIterations: opts.reviewIterations,
     totalFleetTokens: opts.totalFleetTokens, totalAgentInputTokens: totalInputTokens,
     totalAgentOutputTokens: totalOutputTokens, mainAgentActivity: opts.mainAgentActivity, paused: opts.paused,
-    lastAction: opts.lastAction, lastActionAgo: opts.lastActionAgo,
+    lastAction: opts.lastAction, lastActionAgo: opts.lastActionAgo, tokensPerSec, etaSeconds,
     phaseCodeReviewsApproved: phaseCodeApproved,
     phaseCodeReviewsPending: phaseCodePending,
     phaseDesignReviewsApproved: phaseDesignApproved,
