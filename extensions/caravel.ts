@@ -182,6 +182,7 @@ function cleanChunkText(chunk: string): string {
 
 /** Format task progress output: T2 [RUN] developer → Build all gauge... (model) [72k tokens] | 16m */
 function formatTaskProgress(
+  theme: any,
   taskIndex: number,
   taskStatus: string,
   agentName: string,
@@ -694,7 +695,7 @@ function parseKDLLayout(content: string): ZFSLayoutConfig | null {
 }
 
 function generateFleetLayout(agents: Array<{ name: string; description: string }>, customWidth?: number): string {
-  const leftWidth = customWidtheme ?? 60;
+  const leftWidth = customWidth ?? 60;
   const rightWidth = 100 - leftWidth;
   const lines: string[] = [];
   lines.push("// ════════════════════════════════════════════════════════════");
@@ -1267,7 +1268,7 @@ class ZFS {
         if (params.preview) onUpdate?.({ content: [{ type: "text", text: `--- KDL Layout ---\n${kdl}` }] });
         const layoutPath = path.join(ctx.cwd, FLEET_LAYOUT_FILE);
         try { fs.writeFileSync(layoutPath, kdl, "utf-8"); } catch { /* ignore */ }
-        return { content: [{ type: "text", text: `Fleet layout generated (${params.agents.length} agents, left:${params.customWidtheme ?? 60}%)\nSaved to: ${layoutPath}\n\nRun: zellij session create -s caravel --layout ${layoutPath}` }], details: { layout: kdl, savedPath: layoutPath } };
+        return { content: [{ type: "text", text: `Fleet layout generated (${params.agents.length} agents, left:${params.customWidth ?? 60}%)\nSaved to: ${layoutPath}\n\nRun: zellij session create -s caravel --layout ${layoutPath}` }], details: { layout: kdl, savedPath: layoutPath } };
       },
       promptSnippet: "Generate fleet Zellij layout",
     });
@@ -2444,7 +2445,7 @@ function clearState(cwd: string): void {
 // ============================================================================
 
 function buildWidgetLines(ctx: ExtensionContext): string[] {
-  const th = ctx.ui.theme;
+  const theme = ctx.ui.theme;
   const now = Date.now();
 
   const totalTasks = fleetState.phases.reduce((s, p) => s + p.tasks.length, 0);
@@ -2872,6 +2873,7 @@ async function runPhaseInternal(
         const taskIndex = phase.tasks.indexOf(task);
         const elapsed = task.startedAt ? now - task.startedAt : 0;
         const progressLine = formatTaskProgress(
+          ctx.ui.theme,
           taskIndex,
           "running",
           agentDef.name,
@@ -4403,6 +4405,7 @@ export default function (pi: ExtensionAPI) {
     }),
 
     async execute(_toolCallId, params, signal, onUpdate, ctx) {
+      const theme = ctx.ui.theme;
       const idx = params.phaseIndex ?? fleetState.currentPhaseIndex;
       if (idx < 0 || idx >= fleetState.phases.length) {
         return {
@@ -4483,6 +4486,7 @@ export default function (pi: ExtensionAPI) {
             const taskIndex = phase.tasks.indexOf(task);
             const elapsed = task.startedAt ? now - task.startedAt : 0;
             const progressLine = formatTaskProgress(
+              theme,
               taskIndex,
               "running",
               agentDef.name,
