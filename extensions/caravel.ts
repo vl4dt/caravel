@@ -24,6 +24,7 @@ import {
   formatSize,
   DEFAULT_MAX_BYTES,
   DEFAULT_MAX_LINES,
+  theme,
 } from "@earendil-works/pi-coding-agent";
 import {
   visibleWidth,
@@ -189,10 +190,10 @@ function formatTaskProgress(
   elapsedMs: number,
   description?: string,
 ): string {
-  const icon = taskStatus === "complete" ? th.fg("success", "✓") : taskStatus === "failed" ? th.fg("error", "✗") : taskStatus === "waiting" ? th.fg("muted", "○") : th.fg("accent", "▸");
+  const icon = taskStatus === "complete" ? theme.fg("success", "✓") : taskStatus === "failed" ? theme.fg("error", "✗") : taskStatus === "waiting" ? theme.fg("muted", "○") : theme.fg("accent", "▸");
   const statusLabel = taskStatus === "complete" ? "OK" : taskStatus === "reviewing" ? "REV" : taskStatus === "waiting" ? "WAIT" : "RUN";
   const statusColor = taskStatus === "reviewing" ? "accent" : taskStatus === "complete" ? "success" : taskStatus === "failed" ? "error" : taskStatus === "waiting" ? "muted" : "accent";
-  const statusText = th.fg(statusColor, statusLabel);
+  const statusText = theme.fg(statusColor, statusLabel);
   const truncatedDesc = truncate(description || "", 28);
   const elapsedStr = elapsedMs >= 60_000 ? `${Math.floor(elapsedMs / 60_000)}m` : `${Math.floor(elapsedMs / 1000)}s`;
   return `${icon} T${taskIndex + 1} [${statusText}] ${agentName} → ${truncatedDesc} (${model}) [${formatTokens(tokensUsed)} tokens] | ${elapsedStr}`;
@@ -693,7 +694,7 @@ function parseKDLLayout(content: string): ZFSLayoutConfig | null {
 }
 
 function generateFleetLayout(agents: Array<{ name: string; description: string }>, customWidth?: number): string {
-  const leftWidth = customWidth ?? 60;
+  const leftWidth = customWidtheme ?? 60;
   const rightWidth = 100 - leftWidth;
   const lines: string[] = [];
   lines.push("// ════════════════════════════════════════════════════════════");
@@ -1266,7 +1267,7 @@ class ZFS {
         if (params.preview) onUpdate?.({ content: [{ type: "text", text: `--- KDL Layout ---\n${kdl}` }] });
         const layoutPath = path.join(ctx.cwd, FLEET_LAYOUT_FILE);
         try { fs.writeFileSync(layoutPath, kdl, "utf-8"); } catch { /* ignore */ }
-        return { content: [{ type: "text", text: `Fleet layout generated (${params.agents.length} agents, left:${params.customWidth ?? 60}%)\nSaved to: ${layoutPath}\n\nRun: zellij session create -s caravel --layout ${layoutPath}` }], details: { layout: kdl, savedPath: layoutPath } };
+        return { content: [{ type: "text", text: `Fleet layout generated (${params.agents.length} agents, left:${params.customWidtheme ?? 60}%)\nSaved to: ${layoutPath}\n\nRun: zellij session create -s caravel --layout ${layoutPath}` }], details: { layout: kdl, savedPath: layoutPath } };
       },
       promptSnippet: "Generate fleet Zellij layout",
     });
@@ -2454,48 +2455,48 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
   const progress = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
   const elapsed = formatDuration(now - fleetState.startTime);
 
-  const muted = (t: string) => th.fg("muted", t);
-  const dim = (t: string) => th.fg("dim", t);
-  const edge = (t: string) => th.fg("borderMuted", "│") + "  " + t;
+  const muted = (t: string) => theme.fg("muted", t);
+  const dim = (t: string) => theme.fg("dim", t);
+  const edge = (t: string) => theme.fg("borderMuted", "│") + "  " + t;
 
   // ── Build follow indicator ──
   let followLine = "";
   if (followedAgent.agent) {
-    const followIcon = followedAgent.isLive ? th.fg("success", "▸") : th.fg("dim", "○");
+    const followIcon = followedAgent.isLive ? theme.fg("success", "▸") : theme.fg("dim", "○");
     const followColor = followedAgent.isLive ? "success" : "dim";
     const status = followedAgent.isLive ? "LIVE" : "IDLE";
     const followStatusColor = followedAgent.isLive ? "success" : "dim";
-    followLine = `${followIcon} ${followedAgent.agent.padEnd(14)} [${th.fg(followStatusColor, status)}]`;
+    followLine = `${followIcon} ${followedAgent.agent.padEnd(14)} [${theme.fg(followStatusColor, status)}]`;
   }
 
   if (fleetState.phases.length === 0) {
     // ── IDLE ──
     const agentCount = discoverAgents("both").length;
-    const statusIcon = fleetState.paused ? th.fg("warning", "⏸") : th.fg("muted", "●");
+    const statusIcon = fleetState.paused ? theme.fg("warning", "⏸") : theme.fg("muted", "●");
     const statusText = fleetState.paused ? "PAUSED" : "IDLE";
     const sc = fleetState.paused ? "warning" : "muted";
-    const title = th.fg("accent", "CARAVEL FLEET");
+    const title = theme.fg("accent", "CARAVEL FLEET");
     return [
-      edge(`${title}  ${muted("│")}  ${th.fg(sc, statusIcon + " " + statusText)}`),
+      edge(`${title}  ${muted("│")}  ${theme.fg(sc, statusIcon + " " + statusText)}`),
       edge(`[░░░░░░░░░░░░░░░░░░░░] 0%  ${muted("│")}  ${agentCount} agents configured  │  ${elapsed}`),
-      followLine ? edge(th.fg("dim", `  ${followLine}`)) : edge(muted("  last: idle - no active work yet")),
-      edge(`${th.fg("dim", `${buildWidgetReviewStatus(fleetState)}`)}  ${muted("│")}  ${muted(`Review time: ${elapsed}`)}`),
-      edge(muted(`▸ fleet: ${formatTokens(fleetState.totalFleetTokens)}${followLine ? "  │  " + th.fg("dim", `followed: ${followedAgent.agent}`) : ""}`)),
+      followLine ? edge(theme.fg("dim", `  ${followLine}`)) : edge(muted("  last: idle - no active work yet")),
+      edge(`${theme.fg("dim", `${buildWidgetReviewStatus(fleetState)}`)}  ${muted("│")}  ${muted(`Review time: ${elapsed}`)}`),
+      edge(muted(`▸ fleet: ${formatTokens(fleetState.totalFleetTokens)}${followLine ? "  │  " + theme.fg("dim", `followed: ${followedAgent.agent}`) : ""}`)),
     ];
   }
 
   // ── ACTIVE ──
   const phase = fleetState.phases[fleetState.currentPhaseIndex];
   const phaseLabel = phase
-    ? th.fg("accent", `P${fleetState.currentPhaseIndex + 1}/${fleetState.phases.length}: ${phase.name}`)
-    : th.fg("muted", "No current phase");
+    ? theme.fg("accent", `P${fleetState.currentPhaseIndex + 1}/${fleetState.phases.length}: ${phase.name}`)
+    : theme.fg("muted", "No current phase");
 
   const sIcon = phase
-    ? phase.status === "complete" ? th.fg("success", "✓")
-    : phase.status === "failed" ? th.fg("error", "✗")
-    : (phase.status === "running" || phase.status === "reviewing") ? th.fg("accent", "▸")
-    : th.fg("muted", "○")
-    : th.fg("muted", "○");
+    ? phase.status === "complete" ? theme.fg("success", "✓")
+    : phase.status === "failed" ? theme.fg("error", "✗")
+    : (phase.status === "running" || phase.status === "reviewing") ? theme.fg("accent", "▸")
+    : theme.fg("muted", "○")
+    : theme.fg("muted", "○");
   const sText = phase
     ? (phase.status === "complete" ? "DONE" : phase.status === "failed" ? "FAILED" : phase.status === "reviewing" ? "REV" : "RUN")
     : "UNKNOWN";
@@ -2547,12 +2548,12 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
 
     activeTasks.forEach((t) => {
       const idx = phase.tasks.indexOf(t);
-      const statusIcon = t.status === "reviewing" ? th.fg("accent", "◉") : th.fg("accent", "▸");
+      const statusIcon = t.status === "reviewing" ? theme.fg("accent", "◉") : theme.fg("accent", "▸");
       const statusText = t.status === "reviewing" ? "REV" : "RUN";
       const statusColor = t.status === "reviewing" ? "accent" : "success";
       const truncatedDesc = truncate(t.description, 28);
       taskDetails.push(
-        `${statusIcon} T${idx + 1} [${th.fg(statusColor, statusText)}] ${t.agentName} → ${truncatedDesc}`,
+        `${statusIcon} T${idx + 1} [${theme.fg(statusColor, statusText)}] ${t.agentName} → ${truncatedDesc}`,
       );
     });
 
@@ -2561,7 +2562,7 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
     if (lastComplete) {
       const idx = phase.tasks.indexOf(lastComplete);
       taskDetails.push(
-        `  ${th.fg("success", "✓")} T${idx + 1} [OK] ${lastComplete.agentName} → ${truncate(lastComplete.description, 28)}`,
+        `  ${theme.fg("success", "✓")} T${idx + 1} [OK] ${lastComplete.agentName} → ${truncate(lastComplete.description, 28)}`,
       );
     }
 
@@ -2570,7 +2571,7 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
       const next = pendingTasks[0];
       const idx = phase.tasks.indexOf(next);
       taskDetails.push(
-        `  ${th.fg("muted", "○")} T${idx + 1} [WAIT] ${next.agentName} → ${truncate(next.description, 28)}`,
+        `  ${theme.fg("muted", "○")} T${idx + 1} [WAIT] ${next.agentName} → ${truncate(next.description, 28)}`,
       );
     }
 
@@ -2579,7 +2580,7 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
       line3 = muted("  idle - waiting for work");
     }
   } else if (ma && ma.action !== "idle" && (ma.status === "executing" || ma.status === "thinking")) {
-    const actIcon = ma.status === "thinking" ? th.fg("dim", "◇") : th.fg("accent", "▸");
+    const actIcon = ma.status === "thinking" ? theme.fg("dim", "◇") : theme.fg("accent", "▸");
     line3 = `  ${actIcon} running: ${ma.action} → ${truncate(ma.detail, 20)}`;
   } else if (ma && ma.action !== "idle") {
     const age = now - ma.timestamp;
@@ -2590,7 +2591,7 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
   } else if (activeAgentsList.length > 0) {
     line3 = activeAgentsList.map((a) => {
       const model = a.model || "unknown";
-      return `  ${th.fg("accent", "▸")} ${a.name} → ${model}`;
+      return `  ${theme.fg("accent", "▸")} ${a.name} → ${model}`;
     }).join("  │  ");
   } else {
     line3 = muted("  idle - waiting for work");
@@ -2610,10 +2611,10 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
   }
 
   return [
-    edge(`${th.fg("accent", "CARAVEL FLEET")}  ${muted("│")}  ${phaseLabel}  ${muted("│")}  ${th.fg(sColor, sIcon + " " + sText + failExplanation)}`),
+    edge(`${theme.fg("accent", "CARAVEL FLEET")}  ${muted("│")}  ${phaseLabel}  ${muted("│")}  ${theme.fg(sColor, sIcon + " " + sText + failExplanation)}`),
     edge(`[${bar}] ${progress}%  ${muted("│")}  ${completedTasks}/${totalTasks} tasks  │  ${elapsed}`),
     edge(line3 + (followOutput ? followOutput : "")),
-    edge(`${th.fg("dim", `${buildWidgetReviewStatus(fleetState)}`)}  ${muted("│")}  ${muted(`Review time: ${elapsed}`)}`),
+    edge(`${theme.fg("dim", `${buildWidgetReviewStatus(fleetState)}`)}  ${muted("│")}  ${muted(`Review time: ${elapsed}`)}`),
     edge(tokenLine + (followLine ? `  │  ${followLine}` : "")),
     legendLine ? edge(muted(legendLine)) : null,
   ].filter(Boolean);
@@ -4196,19 +4197,19 @@ export default function (pi: ExtensionAPI) {
 
       // ── Build rich metadata report ──
       const th = ctx.hasUI ? ctx.ui.theme : null;
-      const sep = th ? th.fg("dim", "─").repeat(52) : "─".repeat(52);
-      const section = (title: string) => `${th ? th.fg("accent", `▸ ${title}`) : `▸ ${title}`}
-  ${th ? th.fg("dim", sep) : sep}`;
-      const metaLine = (label: string, value: string) => `  ${th ? th.fg("dim", "•") : "•"} ${th ? th.fg("dim", label) : label}: ${value}`;
-      const scanLine = (label: string, value: string) => `  ${th ? th.fg("muted", "○") : "○"} ${th ? th.fg("dim", label) : label}: ${value}`;
+      const sep = theme ? theme.fg("dim", "─").repeat(52) : "─".repeat(52);
+      const section = (title: string) => `${theme ? theme.fg("accent", `▸ ${title}`) : `▸ ${title}`}
+  ${theme ? theme.fg("dim", sep) : sep}`;
+      const metaLine = (label: string, value: string) => `  ${theme ? theme.fg("dim", "•") : "•"} ${theme ? theme.fg("dim", label) : label}: ${value}`;
+      const scanLine = (label: string, value: string) => `  ${theme ? theme.fg("muted", "○") : "○"} ${theme ? theme.fg("dim", label) : label}: ${value}`;
 
       let response = "";
 
       // ── Header ──
       if (result.success) {
-        response += `${th ? th.fg("success", "✅") : "✅"} Codebase Analysis Complete\n\n`;
+        response += `${theme ? theme.fg("success", "✅") : "✅"} Codebase Analysis Complete\n\n`;
       } else {
-        response += `${th ? th.fg("warning", "⚠️") : "⚠️"} Analysis Encountered Issues\n\n`;
+        response += `${theme ? theme.fg("warning", "⚠️") : "⚠️"} Analysis Encountered Issues\n\n`;
       }
 
       // ── Agent & Model metadata ──
@@ -4267,14 +4268,14 @@ export default function (pi: ExtensionAPI) {
       // ── Errors with actionable guidance ──
       if (!result.success && result.errors.length > 0) {
         response += section("Errors");
-        response += `${result.errors.map((e, i) => `  ${th ? th.fg("error", `✗`) : "✗"} ${e}`).join("\n")}\n\n`;
+        response += `${result.errors.map((e, i) => `  ${theme ? theme.fg("error", `✗`) : "✗"} ${e}`).join("\n")}\n\n`;
 
         // Actionable guidance based on error content
         const guidance = buildErrorGuidance(result.errors);
         if (guidance) {
-          response += `${th ? th.fg("accent", "💡 Suggestions"): "💡 Suggestions"}\n`;
+          response += `${theme ? theme.fg("accent", "💡 Suggestions"): "💡 Suggestions"}\n`;
           for (const tip of guidance) {
-            response += `  ${th ? th.fg("muted", "→") : "→"} ${tip}\n`;
+            response += `  ${theme ? theme.fg("muted", "→") : "→"} ${tip}\n`;
           }
           response += "\n";
         }
@@ -4283,17 +4284,17 @@ export default function (pi: ExtensionAPI) {
       // ── Files produced ──
       if (result.success) {
         response += section("Files Produced");
-        response += `  ${th ? th.fg("dim", "○") : "○"} [ANALYSIS.md](./ANALYSIS.md) - Full codebase analysis report\n`;
-        response += `  ${th ? th.fg("dim", "○") : "○"} [PROJECT-DESIGN.md](./PROJECT-DESIGN.md) - Architecture & design overview\n`;
+        response += `  ${theme ? theme.fg("dim", "○") : "○"} [ANALYSIS.md](./ANALYSIS.md) - Full codebase analysis report\n`;
+        response += `  ${theme ? theme.fg("dim", "○") : "○"} [PROJECT-DESIGN.md](./PROJECT-DESIGN.md) - Architecture & design overview\n`;
         response += "\n";
       }
 
       // ── Next steps ──
       if (result.success) {
         response += section("Next Steps");
-        response += `  ${th ? th.fg("dim", "→") : "→"} Use ${th ? th.fg("accent", "plan_project()") : "plan_project()"} to create an implementation plan\n`;
-        response += `  ${th ? th.fg("dim", "→") : "→"} Run ${th ? th.fg("accent", "/go") : "/go"} to execute the fleet\n`;
-        response += `  ${th ? th.fg("dim", "→") : "→"} Read ${th ? th.fg("accent", "ANALYSIS.md") : "ANALYSIS.md"} for detailed findings\n\n`;
+        response += `  ${theme ? theme.fg("dim", "→") : "→"} Use ${theme ? theme.fg("accent", "plan_project()") : "plan_project()"} to create an implementation plan\n`;
+        response += `  ${theme ? theme.fg("dim", "→") : "→"} Run ${theme ? theme.fg("accent", "/go") : "/go"} to execute the fleet\n`;
+        response += `  ${theme ? theme.fg("dim", "→") : "→"} Read ${theme ? theme.fg("accent", "ANALYSIS.md") : "ANALYSIS.md"} for detailed findings\n\n`;
       }
 
       // ── Auto-generate PROJECT-DESIGN.md from analysis ──
@@ -5047,17 +5048,17 @@ Status: idle | Reviews: ${buildWidgetReviewStatus(fleetState)} | Review time: ${
     handler: async (_args, ctx) => {
       const diag = diagnoseFleetErrors();
       const th = ctx.ui.theme;
-      const sep = th.fg("dim", "─").repeat(52);
-      const section = (title: string) => `${th.fg("accent", `▸ ${title}`)}\n  ${th.fg("dim", sep)}`;
-      const sevIcon = (s: string) => s === "critical" ? th.fg("error", "✗") : s === "warning" ? th.fg("warning", "⚠") : th.fg("dim", "○");
+      const sep = theme.fg("dim", "─").repeat(52);
+      const section = (title: string) => `${theme.fg("accent", `▸ ${title}`)}\n  ${theme.fg("dim", sep)}`;
+      const sevIcon = (s: string) => s === "critical" ? theme.fg("error", "✗") : s === "warning" ? theme.fg("warning", "⚠") : theme.fg("dim", "○");
 
       let response = ``;
 
       // ── Header ──
-      response += `${th.fg("dim", `CARAVEL FLEET ERROR DIAGNOSIS`)}\n${th.fg("dim", sep)}\n\n`;
+      response += `${theme.fg("dim", `CARAVEL FLEET ERROR DIAGNOSIS`)}\n${theme.fg("dim", sep)}\n\n`;
 
       // ── Summary ──
-      response += `${th.fg("accent", "📋 Summary")}\n\n`;
+      response += `${theme.fg("accent", "📋 Summary")}\n\n`;
       response += `${diag.summary}\n\n`;
 
       // ── Affected phases ──
@@ -5066,7 +5067,7 @@ Status: idle | Reviews: ${buildWidgetReviewStatus(fleetState)} | Review time: ${
         for (const p of diag.affectedPhases) {
           const failedCount = p.tasks.filter((t) => t.status === "failed").length;
           const total = p.tasks.length;
-          response += `  ${th.fg("error", "✗")} P${fleetState.phases.indexOf(p) + 1}: ${p.name} (${failedCount}/${total} failed)\n`;
+          response += `  ${theme.fg("error", "✗")} P${fleetState.phases.indexOf(p) + 1}: ${p.name} (${failedCount}/${total} failed)\n`;
         }
         response += "\n";
       }
@@ -5081,30 +5082,30 @@ Status: idle | Reviews: ${buildWidgetReviewStatus(fleetState)} | Review time: ${
           response += `    Cause: ${c.explanation}\n`;
           response += `    Fix steps:\n`;
           for (const step of c.fixSteps) {
-            response += `      ${th.fg("dim", "→")} ${step}\n`;
+            response += `      ${theme.fg("dim", "→")} ${step}\n`;
           }
         }
         response += "\n";
       }
 
       // ── Overall action ──
-      response += `${th.fg("accent", "💡 Overall Action")}\n`;
-      response += `  ${th.fg("dim", "→")} ${diag.overallAction}\n\n`;
+      response += `${theme.fg("accent", "💡 Overall Action")}\n`;
+      response += `  ${theme.fg("dim", "→")} ${diag.overallAction}\n\n`;
 
       // ── Quick commands ──
       response += `${section("Quick Commands")}\n`;
-      response += `  ${th.fg("dim", "→")} /caravel-fleet - Toggle widget visibility\n`;
-      response += `  ${th.fg("dim", "→")} fleet_status - Query current state\n`;
+      response += `  ${theme.fg("dim", "→")} /caravel-fleet - Toggle widget visibility\n`;
+      response += `  ${theme.fg("dim", "→")} fleet_status - Query current state\n`;
       if (diag.affectedPhases.length > 0) {
         const lastFailedIdx = fleetState.phases.indexOf(diag.affectedPhases[diag.affectedPhases.length - 1]);
-        response += `  ${th.fg("dim", "→")} fleet_control(action="reset") - Reset fleet state\n`;
-        response += `  ${th.fg("dim", "→")} fleet_control(action="next") - Move past failed phases\n`;
+        response += `  ${theme.fg("dim", "→")} fleet_control(action="reset") - Reset fleet state\n`;
+        response += `  ${theme.fg("dim", "→")} fleet_control(action="next") - Move past failed phases\n`;
       }
       if (diag.causes.some(c => c.cause.includes("Missing agent") || c.cause.includes("missing"))) {
-        response += `  ${th.fg("accent", "→")} Create missing agent files in agents/ directory\n`;
+        response += `  ${theme.fg("accent", "→")} Create missing agent files in agents/ directory\n`;
       }
       if (diag.causes.some(c => c.cause.includes("Token") || c.cause.includes("token"))) {
-        response += `  ${th.fg("accent", "→")} Reduce task scope or switch to a larger-context model\n`;
+        response += `  ${theme.fg("accent", "→")} Reduce task scope or switch to a larger-context model\n`;
       }
       response += "\n";
 
@@ -5118,7 +5119,7 @@ Status: idle | Reviews: ${buildWidgetReviewStatus(fleetState)} | Review time: ${
     description: "Relentlessly challenge the user's project idea from two angles - requirements (why) and plan (how). One question at a time. Persists to SCOPE.md.",
     handler: async (_args, ctx) => {
       const th = ctx.ui.theme;
-      const sep = th.fg("dim", "─").repeat(52);
+      const sep = theme.fg("dim", "─").repeat(52);
 
       // Create initial SCOPE.md template
       const scopePath = "SCOPE.md";
@@ -5165,21 +5166,21 @@ Status: idle | Reviews: ${buildWidgetReviewStatus(fleetState)} | Review time: ${
       }
 
       let response = "";
-      response += th.fg("dim", "PROJECT SCOPE GRILL") + "\n";
-      response += th.fg("dim", sep) + "\n";
+      response += theme.fg("dim", "PROJECT SCOPE GRILL") + "\n";
+      response += theme.fg("dim", sep) + "\n";
       response += "\n";
-      response += th.fg("accent", "🔥 Grill mode engaged — challenging your idea from two angles:\n\n") + "\n";
-      response += th.fg("dim", "  Angle A — Requirements  (Why are we building this? What problem does it solve?)") + "\n";
-      response += th.fg("dim", "  Angle B — Plan         (Is this the right approach? What are we missing?)") + "\n";
+      response += theme.fg("accent", "🔥 Grill mode engaged — challenging your idea from two angles:\n\n") + "\n";
+      response += theme.fg("dim", "  Angle A — Requirements  (Why are we building this? What problem does it solve?)") + "\n";
+      response += theme.fg("dim", "  Angle B — Plan         (Is this the right approach? What are we missing?)") + "\n";
       response += "\n";
-      response += th.fg("dim", sep) + "\n\n";
-      response += th.fg("dim", "One question at a time. I'll provide a recommended answer with reasoning.\n\n") + "\n";
-      response += th.fg("accent", "📋 First question — The Problem:\n\n") + "\n";
-      response += th.fg("dim", "What problem are we actually solving? Who is this for? What do they do today?") + "\n";
-      response += th.fg("dim", "My guess: You have a specific pain point that this project addresses.") + "\n";
-      response += th.fg("dim", "Is that right, or is the real problem something else?") + "\n\n";
-      response += th.fg("dim", "Your answer will be saved to SCOPE.md.\n\n") + "\n";
-      response += th.fg("muted", "Artifacts: " + scopePath + " will persist your answers. Answer and I'll push the next question.") + "\n";
+      response += theme.fg("dim", sep) + "\n\n";
+      response += theme.fg("dim", "One question at a time. I'll provide a recommended answer with reasoning.\n\n") + "\n";
+      response += theme.fg("accent", "📋 First question — The Problem:\n\n") + "\n";
+      response += theme.fg("dim", "What problem are we actually solving? Who is this for? What do they do today?") + "\n";
+      response += theme.fg("dim", "My guess: You have a specific pain point that this project addresses.") + "\n";
+      response += theme.fg("dim", "Is that right, or is the real problem something else?") + "\n\n";
+      response += theme.fg("dim", "Your answer will be saved to SCOPE.md.\n\n") + "\n";
+      response += theme.fg("muted", "Artifacts: " + scopePath + " will persist your answers. Answer and I'll push the next question.") + "\n";
 
       return { content: [{ type: "text", text: response }] };
     },
@@ -5194,14 +5195,14 @@ Status: idle | Reviews: ${buildWidgetReviewStatus(fleetState)} | Review time: ${
     async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
       const diag = diagnoseFleetErrors();
       const th = ctx.ui.theme;
-      const sep = th.fg("dim", "─").repeat(52);
-      const section = (title: string) => `${th.fg("accent", `▸ ${title}`)}\n  ${th.fg("dim", sep)}`;
-      const sevIcon = (s: string) => s === "critical" ? th.fg("error", "✗") : s === "warning" ? th.fg("warning", "⚠") : th.fg("dim", "○");
+      const sep = theme.fg("dim", "─").repeat(52);
+      const section = (title: string) => `${theme.fg("accent", `▸ ${title}`)}\n  ${theme.fg("dim", sep)}`;
+      const sevIcon = (s: string) => s === "critical" ? theme.fg("error", "✗") : s === "warning" ? theme.fg("warning", "⚠") : theme.fg("dim", "○");
 
       let response = ``;
 
-      response += `${th.fg("dim", `CARAVEL FLEET ERROR DIAGNOSIS`)}\n${th.fg("dim", sep)}\n\n`;
-      response += `${th.fg("accent", "📋 Summary")}\n\n`;
+      response += `${theme.fg("dim", `CARAVEL FLEET ERROR DIAGNOSIS`)}\n${theme.fg("dim", sep)}\n\n`;
+      response += `${theme.fg("accent", "📋 Summary")}\n\n`;
       response += `${diag.summary}\n\n`;
 
       if (diag.affectedPhases.length > 0) {
@@ -5209,7 +5210,7 @@ Status: idle | Reviews: ${buildWidgetReviewStatus(fleetState)} | Review time: ${
         for (const p of diag.affectedPhases) {
           const failedCount = p.tasks.filter((t) => t.status === "failed").length;
           const total = p.tasks.length;
-          response += `  ${th.fg("error", "✗")} P${fleetState.phases.indexOf(p) + 1}: ${p.name} (${failedCount}/${total} failed)\n`;
+          response += `  ${theme.fg("error", "✗")} P${fleetState.phases.indexOf(p) + 1}: ${p.name} (${failedCount}/${total} failed)\n`;
         }
         response += "\n";
       }
@@ -5223,27 +5224,27 @@ Status: idle | Reviews: ${buildWidgetReviewStatus(fleetState)} | Review time: ${
           response += `    Cause: ${c.explanation}\n`;
           response += `    Fix steps:\n`;
           for (const step of c.fixSteps) {
-            response += `      ${th.fg("dim", "→")} ${step}\n`;
+            response += `      ${theme.fg("dim", "→")} ${step}\n`;
           }
         }
         response += "\n";
       }
 
-      response += `${th.fg("accent", "💡 Overall Action")}\n`;
-      response += `  ${th.fg("dim", "→")} ${diag.overallAction}\n\n`;
+      response += `${theme.fg("accent", "💡 Overall Action")}\n`;
+      response += `  ${theme.fg("dim", "→")} ${diag.overallAction}\n\n`;
 
       response += `${section("Quick Commands")}\n`;
-      response += `  ${th.fg("dim", "→")} /caravel-fleet - Toggle widget visibility\n`;
-      response += `  ${th.fg("dim", "→")} fleet_status - Query current state\n`;
+      response += `  ${theme.fg("dim", "→")} /caravel-fleet - Toggle widget visibility\n`;
+      response += `  ${theme.fg("dim", "→")} fleet_status - Query current state\n`;
       if (diag.affectedPhases.length > 0) {
-        response += `  ${th.fg("dim", "→")} fleet_control(action="reset") - Reset fleet state\n`;
-        response += `  ${th.fg("dim", "→")} fleet_control(action="next") - Move past failed phases\n`;
+        response += `  ${theme.fg("dim", "→")} fleet_control(action="reset") - Reset fleet state\n`;
+        response += `  ${theme.fg("dim", "→")} fleet_control(action="next") - Move past failed phases\n`;
       }
       if (diag.causes.some(c => c.cause.includes("Missing agent") || c.cause.includes("missing"))) {
-        response += `  ${th.fg("accent", "→")} Create missing agent files in agents/ directory\n`;
+        response += `  ${theme.fg("accent", "→")} Create missing agent files in agents/ directory\n`;
       }
       if (diag.causes.some(c => c.cause.includes("Token") || c.cause.includes("token"))) {
-        response += `  ${th.fg("accent", "→")} Reduce task scope or switch to a larger-context model\n`;
+        response += `  ${theme.fg("accent", "→")} Reduce task scope or switch to a larger-context model\n`;
       }
       response += "\n";
 
