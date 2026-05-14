@@ -10,10 +10,11 @@
 
 - [Getting Started](#getting-started)
 - [Tier 1: First Fleet (Beginner)](#tier-1-first-fleet)
-- [Tier 2: Review & Quality (Intermediate)](#tier-2-review-and-quality)
+- [Tier 2: Review & Quality (Intermediate)](#tier-2-review--quality)
 - [Tier 3: Real Projects (Advanced)](#tier-3-real-projects)
 - [Tier 4: ZFS Mode (Power User)](#tier-4-zfs-mode)
-- [Tier 5: Benchmarks & Customization (Expert)](#tier-5-benchmarks-and-customization)
+- [Tier 5: Benchmarks & Customization (Expert)](#tier-5-benchmarks--customization)
+- [Bonus: Exploring Fleet Commands](#bonus-exploring-fleet-commands)
 - [Quick Reference](#quick-reference)
 
 ---
@@ -355,7 +356,7 @@ Without the grill, you'll rush into building something based on vague assumption
 
 ---
 
-### T3b — Exploring Fleet Commands
+### Bonus: Exploring Fleet Commands
 
 **Goal:** Get comfortable with all fleet control commands.
 
@@ -864,7 +865,7 @@ Tier 1: First Fleet (55 min total)
   T1 → Core pipeline        ──▶ You understand the basic workflow
   T2 → Existing codebase    ──▶ You can extend existing projects
   T3 → The grill            ──▶ You establish foundations before planning
-  T3b → Fleet commands      ──▶ You can control the fleet
+  Bonus → Fleet commands      ──▶ You can control the fleet
     │
     ▼
 Tier 2: Review & Quality (30 min total)
@@ -883,7 +884,7 @@ Tier 4: ZFS Mode (25 min total)
   T10 → Multi-monitor       ──▶ You optimize your workspace
     │
     ▼
-Tier 5: Mastery (60 min total)
+Tier 5: Benchmarks & Customization (60 min total)
   T11 → Model benchmarks    ──▶ You can compare models
   T12 → Error diagnosis     ──▶ You can troubleshoot anything
 ```
