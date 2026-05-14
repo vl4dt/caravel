@@ -409,6 +409,7 @@ The main agent translates these into `fleet_control` and `review_task` calls beh
 | Command | Description |
 |---------|-------------|
 | `/go` | Auto-run all phases with review between each |
+| `/grill` | Relentlessly challenge your idea (requirements + plan) → produces SCOPE.md |
 | `/analyze` | Analyze existing codebase (pre-flight scan, agent metadata, full report) |
 | `/fleet` | Toggle the fleet widget bar visibility |
 | `/diagnose` | Diagnose failed phases/tasks with structured root-cause analysis |
@@ -503,6 +504,7 @@ caravel/
 ├── skills/
 │   ├── analyze.md        # /analyze command
 │   ├── plan.md           # /plan command
+│   ├── grill.md          # /grill command — pre-plan stress test
 │   ├── progress.md       # Progress feedback templates
 │   ├── code-review.md    # Code review checklist
 │   ├── design-review.md  # Design review checklist

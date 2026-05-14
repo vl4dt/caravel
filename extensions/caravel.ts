@@ -129,7 +129,7 @@ function enforceTestability(
 
 function buildBlockMessage(taskResults: TaskValidationResult[], allFailures: CriterionFailure[]): string {
   const lines: string[] = [];
-  lines.push("⛔ Task creation BLOCKED — testability enforcement");
+  lines.push("⛔ Task creation BLOCKED - testability enforcement");
   lines.push("");
   lines.push("Every task MUST have: (1) tests/verification, (2) acceptance criteria, (3) measurable outcome.");
   lines.push("");
@@ -292,7 +292,7 @@ function sanitizeDisplay(text: string): string {
 function safeAppend(buf: string, chunk: string, maxBytes: number): string {
   const combined = buf + chunk;
   if (combined.length <= maxBytes) return combined;
-  // Keep the tail — useful for follow/scrollback
+  // Keep the tail - useful for follow/scrollback
   return combined.slice(-(maxBytes - 100)) + "...[truncated]";
 }
 
@@ -313,7 +313,7 @@ function buildAgentGrid(snap: StatusBarFleetSnapshot): string {
     parts.push(statusText);
   }
   const result = parts.join("  │  ");
-  if (result.length > BAR_WIDTH - 4) return result.slice(0, BAR_WIDTH - 4) + "…";
+  if (result.length > BAR_WIDTH - 4) return result.slice(0, BAR_WIDTH - 4) + "...";
   return "  " + result;
 }
 
@@ -329,7 +329,7 @@ function buildAgentDetails(snap: StatusBarFleetSnapshot): string {
       const ago = snap.lastActionAgo || "";
       return `  ● last: ${sanitizeDisplay(snap.lastAction)}${ago ? ` (${ago})` : ""}`;
     }
-    return "  ● idle — waiting for work";
+    return "  ● idle - waiting for work";
   }
   const lines: string[] = [];
   const show = active.slice(0, 3);
@@ -668,7 +668,7 @@ function generateFleetLayout(agents: Array<{ name: string; description: string }
   const rightWidth = 100 - leftWidth;
   const lines: string[] = [];
   lines.push("// ════════════════════════════════════════════════════════════");
-  lines.push("// Caravel Fleet — Auto-generated Zellij Layout");
+  lines.push("// Caravel Fleet - Auto-generated Zellij Layout");
   lines.push("// ════════════════════════════════════════════════════════════");
   lines.push("");
   lines.push("window {");
@@ -762,7 +762,7 @@ class ZFS {
 
   async checkAndInitZellij(): Promise<{ available: boolean; message: string }> {
     this.zellijAvailable = await checkCommandAsync("zellij");
-    if (this.zellijAvailable) return { available: true, message: "Zellij detected — fleet process manager ready." };
+    if (this.zellijAvailable) return { available: true, message: "Zellij detected - fleet process manager ready." };
     return { available: false, message: "Zellij not found. Install from https://zellij.dev/tutorials/installation/ or fleet will fall back to background processes." };
   }
 
@@ -808,7 +808,7 @@ class ZFS {
     if (!this.layoutConfig) return generateFleetLayout(agents);
     const lines: string[] = [];
     const cfg = this.layoutConfig;
-    lines.push("// Caravel Fleet — Auto-generated from layout config");
+    lines.push("// Caravel Fleet - Auto-generated from layout config");
     lines.push("window {");
     lines.push("");
     for (const pane of cfg.panes) {
@@ -1067,7 +1067,7 @@ class ZFS {
     pi.on("session_start", async (_event: any, ctx: any) => {
       self.setCwd(ctx.cwd);
       const init = await self.checkAndInitZellij();
-      if (init.available) { ctx.ui.notify("ZFS: Zellij detected — fleet process manager ready", "info"); self.initStatusBar(); }
+      if (init.available) { ctx.ui.notify("ZFS: Zellij detected - fleet process manager ready", "info"); self.initStatusBar(); }
       else { ctx.ui.notify(`ZFS: ${init.message}`, "warning"); }
     });
     pi.on("session_shutdown", async () => { await self.cleanup(); });
@@ -1149,7 +1149,7 @@ class ZFS {
       parameters: Type.Object({ agentName: Type.String({ description: "Agent name to skip" }) }),
       execute: async (_toolCallId: string, params: any, _signal: any, _onUpdate: any, ctx: any) => {
         const result = self.skipPane(params.agentName);
-        return { content: [{ type: "text", text: result ? `Agent "${params.agentName}" skipped — pane terminated.` : `Agent "${params.agentName}" not found running.` }], details: { agent: params.agentName, skipped: result } };
+        return { content: [{ type: "text", text: result ? `Agent "${params.agentName}" skipped - pane terminated.` : `Agent "${params.agentName}" not found running.` }], details: { agent: params.agentName, skipped: result } };
       },
       promptSnippet: "Skip a specific agent",
     });
@@ -1213,7 +1213,7 @@ class ZFS {
       execute: async (_toolCallId: string, params: any, _signal: any, onUpdate: any, ctx: any) => {
         self.setCwd(ctx.cwd);
         const info = self.getStatusBarInfo();
-        if (!info.available) return { content: [{ type: "text", text: "ZFS not available — status bar requires Zellij installed." }], details: { toggled: false, reason: "zfs_unavailable" } };
+        if (!info.available) return { content: [{ type: "text", text: "ZFS not available - status bar requires Zellij installed." }], details: { toggled: false, reason: "zfs_unavailable" } };
         self.initStatusBar();
         const targetOn = params.enabled ?? !info.active;
         if (targetOn) {
@@ -1246,7 +1246,7 @@ class ZFS {
 
 
 // ===========================================================================
-// Background Process Manager — launches fleet as a detached process,
+// Background Process Manager - launches fleet as a detached process,
 // supports migrating running fleet to ZFS mid-execution.
 // ===========================================================================
 
@@ -1295,7 +1295,7 @@ class BackgroundProcessManager {
 
     // If migrating from ZFS, transfer state to bg mode
     if (this.state.zfsSession) {
-      // ZFS migration happened — just update state, don't re-spawn
+      // ZFS migration happened - just update state, don't re-spawn
       this.state.zfsSession = undefined;
       this.state.running = true;
       this.state.startedAt = Date.now();
@@ -1383,11 +1383,11 @@ class BackgroundProcessManager {
     // Check if session already exists
     const zfsState = zfs.getFleetState();
     if (zfsState.activePanes > 0 || zfsState.activeProcesses > 0) {
-      // ZFS session exists — refresh it instead
+      // ZFS session exists - refresh it instead
       zfs.initStatusBar();
       zfs.refreshStatusBar();
       this.state.zfsSession = { sessionName: zfsState.sessionName, layoutPath: "", agentPanes: [], statusBarActive: true, migratedAt: Date.now() };
-      return { success: true, message: "ZFS session already active — status bar refreshed. Fleet continues in ZFS." };
+      return { success: true, message: "ZFS session already active - status bar refreshed. Fleet continues in ZFS." };
     }
 
     // Discover agents for the ZFS layout
@@ -1697,7 +1697,7 @@ function ensureZFS(): ZFS {
 }
 
 // ============================================================================
-// Follow system — track which agent's live output the user is watching
+// Follow system - track which agent's live output the user is watching
 // ============================================================================
 
 interface FollowState {
@@ -2168,7 +2168,7 @@ function buildErrorGuidance(errors: string[]): string[] {
   }
 
   if (lower.includes("timeout") || lower.includes("timed out")) {
-    suggestions.push("The agent may have hung — check the model provider status");
+    suggestions.push("The agent may have hung - check the model provider status");
     suggestions.push("Try with a smaller model or simpler prompt");
   }
 
@@ -2245,7 +2245,7 @@ function diagnoseFleetErrors(): ErrorDiagnosisResult {
   if (criticalCount > 0) {
     summary = `⚠️ Fleet has ${criticalCount} critical error(s)${warningCount > 0 ? ` and ${warningCount} warning(s)` : ""} that need attention.`;
   } else if (warningCount > 0) {
-    summary = `ℹ️ Fleet has ${warningCount} warning(s) to review.`;
+    summary = `i️ Fleet has ${warningCount} warning(s) to review.`;
   } else {
     summary = `Found failed tasks in the fleet.`;
   }
@@ -2279,7 +2279,7 @@ function getPiInvocation(args: string[]): { command: string; args: string[] } {
 }
 
 // ============================================================================
-// State persistence — file-based on-disk JSON
+// State persistence - file-based on-disk JSON
 // ============================================================================
 
 /** Directory where caravel persists its state files. */
@@ -2305,7 +2305,7 @@ interface SerializedFleetState {
  */
 function saveState(): void {
   if (!_pi) return;
-  const filePath = stateFilePath(_pi.cwd);
+  const filePath = stateFilePath(_pi.cwd ?? process.cwd());
   try {
     const dir = path.dirname(filePath);
     if (!fs.existsSync(dir)) {
@@ -2405,12 +2405,12 @@ function clearState(cwd: string): void {
       }
     }
   } catch {
-    // ignore — state is ephemeral
+    // ignore - state is ephemeral
   }
 }
 
 // ============================================================================
-// Widget bar — always exactly 4 lines, left-edge only
+// Widget bar - always exactly 4 lines, left-edge only
 // ============================================================================
 
 function buildWidgetLines(ctx: ExtensionContext): string[] {
@@ -2449,7 +2449,7 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
     return [
       edge(`${title}  ${muted("│")}  ${th.fg(sc, statusIcon + " " + statusText)}`),
       edge(`[░░░░░░░░░░░░░░░░░░░░] 0%  ${muted("│")}  ${agentCount} agents configured  │  ${elapsed}`),
-      followLine ? edge(th.fg("dim", `  ${followLine}`)) : edge(muted("  last: idle — no active work yet")),
+      followLine ? edge(th.fg("dim", `  ${followLine}`)) : edge(muted("  last: idle - no active work yet")),
       edge(`${th.fg("dim", `${buildWidgetReviewStatus(fleetState)}`)}  ${muted("│")}  ${muted(`Review time: ${elapsed}`)}`),
       edge(muted(`▸ fleet: ${formatTokens(fleetState.totalFleetTokens)}${followLine ? "  │  " + th.fg("dim", `followed: ${followedAgent.agent}`) : ""}`)),
     ];
@@ -2484,7 +2484,7 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
     if (failedTasks.length > 0) {
       const lastFailed = failedTasks[failedTasks.length - 1];
       const reason = lastFailed.stderr ? "error" : (lastFailed.output ? "output" : "unknown");
-      failExplanation = ` — ${lastFailed.agentName}: ${reason === "error" ? "exit code" : "error"}`;
+      failExplanation = ` - ${lastFailed.agentName}: ${reason === "error" ? "exit code" : "error"}`;
     }
   }
 
@@ -2496,7 +2496,7 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
   const totalInput = activeAgentsList.reduce((s, a) => s + (a.inputTokens || 0), 0);
   const totalOutput = activeAgentsList.reduce((s, a) => s + (a.outputTokens || 0), 0);
   const agentTokens = activeAgentsList.map((a) => {
-    const name = a.name.length > 10 ? a.name.slice(0, 9) + "…" : a.name;
+    const name = a.name.length > 10 ? a.name.slice(0, 9) + "..." : a.name;
     const inp = formatTokens(a.inputTokens || 0);
     const out = formatTokens(a.outputTokens || 0);
     return `${name}(${inp}/${out})`;
@@ -2547,7 +2547,7 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
 
     line3 = taskDetails.join("  │  ");
     if (!line3) {
-      line3 = muted("  idle — waiting for work");
+      line3 = muted("  idle - waiting for work");
     }
   } else if (ma && ma.action !== "idle" && (ma.status === "executing" || ma.status === "thinking")) {
     const actIcon = ma.status === "thinking" ? th.fg("dim", "◇") : th.fg("accent", "▸");
@@ -2564,7 +2564,7 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
       return `  ${th.fg("accent", "▸")} ${a.name} → ${model}`;
     }).join("  │  ");
   } else {
-    line3 = muted("  idle — waiting for work");
+    line3 = muted("  idle - waiting for work");
   }
 
   // Build a follow output snippet to append to the last line
@@ -2953,12 +2953,12 @@ async function runReviewInternal(
     + ((designResult.usage?.input || 0) + (designResult.usage?.output || 0));
   fleetState.totalFleetTokens += reviewTokens;
 
-  // Check for agent availability errors first — can't fix missing agents
+  // Check for agent availability errors first - can't fix missing agents
   if (codeResult.error) {
-    return `Review #${fleetState.reviewIterations}: ⚠️ Code review failed — ${codeResult.error}`;
+    return `Review #${fleetState.reviewIterations}: ⚠️ Code review failed - ${codeResult.error}`;
   }
   if (designResult.error) {
-    return `Review #${fleetState.reviewIterations}: ⚠️ Design review failed — ${designResult.error}`;
+    return `Review #${fleetState.reviewIterations}: ⚠️ Design review failed - ${designResult.error}`;
   }
 
   let allApproved = true;
@@ -3129,7 +3129,7 @@ function countTree(dir: string, seen: Set<string>): { files: number; dirs: numbe
       }
     }
   } catch {
-    // Permission denied or other error — stop this branch
+    // Permission denied or other error - stop this branch
   }
   return { files, dirs, truncated: false };
 }
@@ -3444,13 +3444,13 @@ You MUST save your complete analysis report to the file "ANALYSIS.md" in the pro
 [Detailed description of architectural patterns, module organization, data flow, layer boundaries]
 
 ## Entry Points
-- [file path] — [purpose/role]
+- [file path] - [purpose/role]
 
 ## Dependencies
 ### Production
-- [package@version] — [purpose]
+- [package@version] - [purpose]
 ### Development
-- [package@version] — [purpose]
+- [package@version] - [purpose]
 
 ## Test Coverage
 - Framework: [name]
@@ -3459,14 +3459,14 @@ You MUST save your complete analysis report to the file "ANALYSIS.md" in the pro
 - Gaps: [what's missing]
 
 ## Technical Debt
-- [Issue] → [file/path:line] — [impact]
+- [Issue] → [file/path:line] - [impact]
 
 ## Security Findings
-- [Issue] → [file/path] — [risk level]
+- [Issue] → [file/path] - [risk level]
 
 ## Recommendations
-1. [Priority] Action — why + which files
-2. [Priority] Action — why + which files`;
+1. [Priority] Action - why + which files
+2. [Priority] Action - why + which files`;
 
   const startTime = Date.now();
 
@@ -3516,7 +3516,7 @@ You MUST save your complete analysis report to the file "ANALYSIS.md" in the pro
       try {
         await fs.promises.writeFile(analysisPath, analysisTask.output.trim(), "utf-8");
       } catch {
-        // Non-fatal — analysis text is still returned
+        // Non-fatal - analysis text is still returned
       }
       return {
         agent: analyzer,
@@ -3577,7 +3577,7 @@ function generateDesignDocument(result: AnalysisResult, ctx: ExtensionContext): 
   const now = new Date().toISOString().split("T")[0];
   const lines: string[] = [];
 
-  lines.push(`# ${getProjectName(ctx.cwd)} — Design Document`);
+  lines.push(`# ${getProjectName(ctx.cwd)} - Design Document`);
   lines.push("");
   lines.push(`> Generated: ${now} from codebase analysis`);
   lines.push(`> Source: ${result.agent.name} agent (model: ${result.agent.model || "unknown"})`);
@@ -3673,7 +3673,7 @@ function generatePlanDocument(
   const now = new Date().toISOString().split("T")[0];
   const lines: string[] = [];
 
-  lines.push(`# ${planName} — Project Plan`);
+  lines.push(`# ${planName} - Project Plan`);
   lines.push("");
   lines.push(`> Generated: ${now} from project planning phase`);
   lines.push(`> Phases: ${phases.length}`);
@@ -3942,10 +3942,10 @@ export default function (pi: ExtensionAPI) {
         lines.push(`║  Status: ${followStatus.padEnd(37)}║`);
         lines.push("║");
         lines.push("║  Commands:                                            ║");
-        lines.push("║    /follow <agent>  — follow agent output             ║");
-        lines.push("║    /follow switch   — toggle between running agents   ║");
-        lines.push("║    /follow none     — stop following                  ║");
-        lines.push("║    /follow list     — show this list                  ║");
+        lines.push("║    /follow <agent>  - follow agent output             ║");
+        lines.push("║    /follow switch   - toggle between running agents   ║");
+        lines.push("║    /follow none     - stop following                  ║");
+        lines.push("║    /follow list     - show this list                  ║");
         lines.push("╚═══════════════════════════════════════════════════════╝");
 
         return { content: [{ type: "text", text: lines.join("\n") }] };
@@ -4010,7 +4010,7 @@ export default function (pi: ExtensionAPI) {
         if (!known) {
           return { content: [{ type: "text", text: `Unknown agent "${agentName}". Use /follow list to see available agents.` }] };
         }
-        // Known agent — start following, buffer is empty until it runs
+        // Known agent - start following, buffer is empty until it runs
         // Capture previous if any
         if (followedAgent.agent) {
           agentOutputBuffers.set(`agent-${followedAgent.agent}`, {
@@ -4069,7 +4069,7 @@ export default function (pi: ExtensionAPI) {
         return { content: [{ type: "text", text: `Fleet is idle. No phases defined.\n\nTo start, either:\n  1. Use plan_project() to define phases, then call /caravel-go again\n  2. Describe your project in natural language and the planner agent will create the plan` }] };
       }
 
-      // Check if fleet is paused — if so, block and report
+      // Check if fleet is paused - if so, block and report
       if (fleetState.paused) {
         const savedPath = stateFilePath(ctx.cwd);
         return {
@@ -4095,13 +4095,13 @@ export default function (pi: ExtensionAPI) {
         const phase = fleetState.phases[phaseIndex];
 
         if (phase.status === "complete") {
-          results.push(`✅ Phase ${phaseIndex + 1} "${phase.name}" — already complete`);
+          results.push(`✅ Phase ${phaseIndex + 1} "${phase.name}" - already complete`);
           phaseIndex++;
           continue;
         }
 
         if (phase.status === "failed" && phaseIndex !== fleetState.currentPhaseIndex) {
-          results.push(`⚠️ Phase ${phaseIndex + 1} "${phase.name}" — failed, skipping`);
+          results.push(`⚠️ Phase ${phaseIndex + 1} "${phase.name}" - failed, skipping`);
           phaseIndex++;
           continue;
         }
@@ -4288,8 +4288,8 @@ export default function (pi: ExtensionAPI) {
       // ── Files produced ──
       if (result.success) {
         response += section("Files Produced");
-        response += `  ${th ? th.fg("dim", "○") : "○"} [ANALYSIS.md](./ANALYSIS.md) — Full codebase analysis report\n`;
-        response += `  ${th ? th.fg("dim", "○") : "○"} [PROJECT-DESIGN.md](./PROJECT-DESIGN.md) — Architecture & design overview\n`;
+        response += `  ${th ? th.fg("dim", "○") : "○"} [ANALYSIS.md](./ANALYSIS.md) - Full codebase analysis report\n`;
+        response += `  ${th ? th.fg("dim", "○") : "○"} [PROJECT-DESIGN.md](./PROJECT-DESIGN.md) - Architecture & design overview\n`;
         response += "\n";
       }
 
@@ -4307,7 +4307,7 @@ export default function (pi: ExtensionAPI) {
       try {
         await fs.promises.writeFile(designPath, designDoc, "utf-8");
       } catch {
-        // Non-fatal — design doc generation is optional
+        // Non-fatal - design doc generation is optional
       }
 
       return { content: [{ type: "text", text: response }] };
@@ -4379,7 +4379,7 @@ export default function (pi: ExtensionAPI) {
       try {
         await fs.promises.writeFile(planPath, planDoc, "utf-8");
       } catch {
-        // Non-fatal — plan doc generation is optional
+        // Non-fatal - plan doc generation is optional
       }
 
       const summary = phases
@@ -4415,7 +4415,7 @@ export default function (pi: ExtensionAPI) {
         };
       }
 
-      // Check if fleet is paused — block execution
+      // Check if fleet is paused - block execution
       if (fleetState.paused) {
         const savedPath = stateFilePath(ctx.cwd);
         return {
@@ -5087,12 +5087,12 @@ Status: idle | Reviews: ${buildWidgetReviewStatus(fleetState)} | Review time: ${
 
       // ── Quick commands ──
       response += `${section("Quick Commands")}\n`;
-      response += `  ${th.fg("dim", "→")} /caravel-fleet — Toggle widget visibility\n`;
-      response += `  ${th.fg("dim", "→")} fleet_status — Query current state\n`;
+      response += `  ${th.fg("dim", "→")} /caravel-fleet - Toggle widget visibility\n`;
+      response += `  ${th.fg("dim", "→")} fleet_status - Query current state\n`;
       if (diag.affectedPhases.length > 0) {
         const lastFailedIdx = fleetState.phases.indexOf(diag.affectedPhases[diag.affectedPhases.length - 1]);
-        response += `  ${th.fg("dim", "→")} fleet_control(action="reset") — Reset fleet state\n`;
-        response += `  ${th.fg("dim", "→")} fleet_control(action="next") — Move past failed phases\n`;
+        response += `  ${th.fg("dim", "→")} fleet_control(action="reset") - Reset fleet state\n`;
+        response += `  ${th.fg("dim", "→")} fleet_control(action="next") - Move past failed phases\n`;
       }
       if (diag.causes.some(c => c.cause.includes("Missing agent") || c.cause.includes("missing"))) {
         response += `  ${th.fg("accent", "→")} Create missing agent files in agents/ directory\n`;
@@ -5106,10 +5106,83 @@ Status: idle | Reviews: ${buildWidgetReviewStatus(fleetState)} | Review time: ${
     },
   });
 
+  // ---- /grill: relentlessly challenge the user's idea ----
+
+  pi.registerCommand("grill", {
+    description: "Relentlessly challenge the user's project idea from two angles - requirements (why) and plan (how). One question at a time. Persists to SCOPE.md.",
+    handler: async (_args, ctx) => {
+      const th = ctx.ui.theme;
+      const sep = th.fg("dim", "─").repeat(52);
+
+      // Create initial SCOPE.md template
+      const scopePath = "SCOPE.md";
+      const scopeTemplate = `# Project Scope
+
+> Grill started: ${new Date().toISOString().split("T")[0]}
+> Status: In progress
+> Questions asked: 0
+> User confirmed: Pending
+> Ready to plan: Pending
+
+## Requirements (The "Why")
+
+| # | Question | Answer | Confirmed |
+|---|----------|--------|-----------|
+| 1 | Problem? |        | ☐ Pending |
+| 2 | Users?   |        | ☐ Pending |
+| 3 | Success? |        | ☐ Pending |
+| 4 | Scope?   |        | ☐ Pending |
+| 5 | Not built? |      | ☐ Pending |
+
+## Design Decisions (The "How")
+
+| # | Decision | Answer | Confirmed |
+|---|----------|--------|-----------|
+| 1 | Stack?   |        | ☐ Pending |
+| 2 | Priority |        | ☐ Pending |
+| 3 | Scale?   |        | ☐ Pending |
+
+## Risks & Unknowns
+
+- None yet (grill in progress)
+
+## Sign-Off
+
+- User confirmed: ☐ Not confirmed
+- Ready to plan: ☐ Not ready
+`;
+
+      try {
+        await fs.promises.writeFile(scopePath, scopeTemplate, "utf-8");
+      } catch {
+        // Silently continue if we can't write
+      }
+
+      let response = "";
+      response += th.fg("dim", "PROJECT SCOPE GRILL") + "\n";
+      response += th.fg("dim", sep) + "\n";
+      response += "\n";
+      response += th.fg("accent", "🔥 Grill mode engaged — challenging your idea from two angles:\n\n") + "\n";
+      response += th.fg("dim", "  Angle A — Requirements  (Why are we building this? What problem does it solve?)") + "\n";
+      response += th.fg("dim", "  Angle B — Plan         (Is this the right approach? What are we missing?)") + "\n";
+      response += "\n";
+      response += th.fg("dim", sep) + "\n\n";
+      response += th.fg("dim", "One question at a time. I'll provide a recommended answer with reasoning.\n\n") + "\n";
+      response += th.fg("accent", "📋 First question — The Problem:\n\n") + "\n";
+      response += th.fg("dim", "What problem are we actually solving? Who is this for? What do they do today?") + "\n";
+      response += th.fg("dim", "My guess: You have a specific pain point that this project addresses.") + "\n";
+      response += th.fg("dim", "Is that right, or is the real problem something else?") + "\n\n";
+      response += th.fg("dim", "Your answer will be saved to SCOPE.md.\n\n") + "\n";
+      response += th.fg("muted", "Artifacts: " + scopePath + " will persist your answers. Answer and I'll push the next question.") + "\n";
+
+      return { content: [{ type: "text", text: response }] };
+    },
+  });
+
   pi.registerTool({
     name: "fleet_error_diagnosis",
     label: "Fleet Error Diagnosis",
-    description: "Analyze fleet errors — missing agents, exit codes, stderr, token limits, rate limits — and provide actionable fix steps for each cause.",
+    description: "Analyze fleet errors - missing agents, exit codes, stderr, token limits, rate limits - and provide actionable fix steps for each cause.",
     parameters: Type.Object({}),
 
     async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
@@ -5154,11 +5227,11 @@ Status: idle | Reviews: ${buildWidgetReviewStatus(fleetState)} | Review time: ${
       response += `  ${th.fg("dim", "→")} ${diag.overallAction}\n\n`;
 
       response += `${section("Quick Commands")}\n`;
-      response += `  ${th.fg("dim", "→")} /caravel-fleet — Toggle widget visibility\n`;
-      response += `  ${th.fg("dim", "→")} fleet_status — Query current state\n`;
+      response += `  ${th.fg("dim", "→")} /caravel-fleet - Toggle widget visibility\n`;
+      response += `  ${th.fg("dim", "→")} fleet_status - Query current state\n`;
       if (diag.affectedPhases.length > 0) {
-        response += `  ${th.fg("dim", "→")} fleet_control(action="reset") — Reset fleet state\n`;
-        response += `  ${th.fg("dim", "→")} fleet_control(action="next") — Move past failed phases\n`;
+        response += `  ${th.fg("dim", "→")} fleet_control(action="reset") - Reset fleet state\n`;
+        response += `  ${th.fg("dim", "→")} fleet_control(action="next") - Move past failed phases\n`;
       }
       if (diag.causes.some(c => c.cause.includes("Missing agent") || c.cause.includes("missing"))) {
         response += `  ${th.fg("accent", "→")} Create missing agent files in agents/ directory\n`;
@@ -5302,13 +5375,13 @@ Status: idle | Reviews: ${buildWidgetReviewStatus(fleetState)} | Review time: ${
             const phase = fleetState.phases[phaseIndex];
 
             if (phase.status === "complete") {
-              results.push(`✅ Phase ${phaseIndex + 1} "${phase.name}" — already complete`);
+              results.push(`✅ Phase ${phaseIndex + 1} "${phase.name}" - already complete`);
               phaseIndex++;
               continue;
             }
 
             if (phase.status === "failed" && phaseIndex !== fleetState.currentPhaseIndex) {
-              results.push(`⚠️ Phase ${phaseIndex + 1} "${phase.name}" — failed, skipping`);
+              results.push(`⚠️ Phase ${phaseIndex + 1} "${phase.name}" - failed, skipping`);
               phaseIndex++;
               continue;
             }
@@ -5462,7 +5535,7 @@ Status: idle | Reviews: ${buildWidgetReviewStatus(fleetState)} | Review time: ${
   });
 
   // ============================================================================
-  // /zellij-* commands — ZFS fleet session management
+  // /zellij-* commands - ZFS fleet session management
   // ============================================================================
 
   // ---- /zellij-start: Launch fleet in Zellij ----
@@ -5562,7 +5635,7 @@ Status: idle | Reviews: ${buildWidgetReviewStatus(fleetState)} | Review time: ${
       summaryLines.push(``);
       summaryLines.push(`Agent panes:`);
       for (const agent of agentDefs) {
-        summaryLines.push(`  ▸ ${agent.name.padEnd(14)} — ${agent.description.slice(0, 40)}`);
+        summaryLines.push(`  ▸ ${agent.name.padEnd(14)} - ${agent.description.slice(0, 40)}`);
       }
       summaryLines.push(``);
       summaryLines.push(`Navigation:`);
@@ -5694,11 +5767,11 @@ Status: idle | Reviews: ${buildWidgetReviewStatus(fleetState)} | Review time: ${
       if (fleetState.paused) lines.push(`║    ⚠️  PAUSED                                              ║`);
       lines.push("║");
       lines.push("║  Commands:                                                ║");
-      lines.push(`║    /zellij-panes  — This list                            ║`);
-      lines.push(`║    /zellij-follow <name>  — Follow an agent              ║`);
-      lines.push(`║    /zellij-status   — Fleet overview                     ║`);
-      lines.push(`║    /zellij-start    — Start fleet session                ║`);
-      lines.push(`║    /zellij-stop     — Stop fleet session                 ║`);
+      lines.push(`║    /zellij-panes  - This list                            ║`);
+      lines.push(`║    /zellij-follow <name>  - Follow an agent              ║`);
+      lines.push(`║    /zellij-status   - Fleet overview                     ║`);
+      lines.push(`║    /zellij-start    - Start fleet session                ║`);
+      lines.push(`║    /zellij-stop     - Stop fleet session                 ║`);
       lines.push("╚═══════════════════════════════════════════════════════════╝");
 
       return {
@@ -5764,10 +5837,10 @@ Status: idle | Reviews: ${buildWidgetReviewStatus(fleetState)} | Review time: ${
         lines.push(`║  Status: ${followStatus.padEnd(37)}║`);
         lines.push("║");
         lines.push("║  Commands:                                            ║");
-        lines.push(`║    /zellij-follow <agent>  — Follow agent output      ║`);
-        lines.push(`║    /zellij-follow switch   — Cycle between agents    ║`);
-        lines.push(`║    /zellij-follow none     — Stop following           ║`);
-        lines.push(`║    /zellij-follow list     — Show this list           ║`);
+        lines.push(`║    /zellij-follow <agent>  - Follow agent output      ║`);
+        lines.push(`║    /zellij-follow switch   - Cycle between agents    ║`);
+        lines.push(`║    /zellij-follow none     - Stop following           ║`);
+        lines.push(`║    /zellij-follow list     - Show this list           ║`);
         lines.push("╚═══════════════════════════════════════════════════════╝");
 
         return { content: [{ type: "text", text: lines.join("\n") }] };
@@ -5993,19 +6066,19 @@ Status: idle | Reviews: ${buildWidgetReviewStatus(fleetState)} | Review time: ${
       // ── Quick Actions ──
       lines.push("║  ── Quick Actions ──                                    ║");
       const zfsRunning = state.activePanes > 0 || state.activeProcesses > 0;
-      lines.push(`║    /zellij-start    — ${zfsRunning ? "Fleet already running" : "Start ZFS fleet".padEnd(30)}║`);
-      lines.push(`║    /zellij-stop     — ${zfsRunning ? "Stop ZFS fleet" : "No session to stop".padEnd(28)}║`);
-      lines.push(`║    /zellij-panes    — List all panes                    ║`);
-      lines.push(`║    /zellij-follow   — Follow agent output               ║`);
-      lines.push(`║    /zellij-status   — This overview                     ║`);
-      lines.push(`║    /follow <agent>  — Follow agent (general)            ║`);
-      lines.push(`║    /caravel-fleet   — Toggle widget bar                  ║`);
-      lines.push(`║    /caravel-go      — Auto-orchestrate all phases        ║`);
-      lines.push(`║    /diagnose        — Diagnose errors                    ║`);
+      lines.push(`║    /zellij-start    - ${zfsRunning ? "Fleet already running" : "Start ZFS fleet".padEnd(30)}║`);
+      lines.push(`║    /zellij-stop     - ${zfsRunning ? "Stop ZFS fleet" : "No session to stop".padEnd(28)}║`);
+      lines.push(`║    /zellij-panes    - List all panes                    ║`);
+      lines.push(`║    /zellij-follow   - Follow agent output               ║`);
+      lines.push(`║    /zellij-status   - This overview                     ║`);
+      lines.push(`║    /follow <agent>  - Follow agent (general)            ║`);
+      lines.push(`║    /caravel-fleet   - Toggle widget bar                  ║`);
+      lines.push(`║    /caravel-go      - Auto-orchestrate all phases        ║`);
+      lines.push(`║    /diagnose        - Diagnose errors                    ║`);
       if (fleetState.phases.length > 0) {
-        lines.push(`║    fleet_status      — Fleet status query               ║`);
-        lines.push(`║    fleet_control(action="pause")  — Pause fleet         ║`);
-        lines.push(`║    fleet_control(action="resume") — Resume fleet        ║`);
+        lines.push(`║    fleet_status      - Fleet status query               ║`);
+        lines.push(`║    fleet_control(action="pause")  - Pause fleet         ║`);
+        lines.push(`║    fleet_control(action="resume") - Resume fleet        ║`);
       }
       lines.push("╚═══════════════════════════════════════════════════════════╝");
 
@@ -6072,7 +6145,7 @@ Status: idle | Reviews: ${buildWidgetReviewStatus(fleetState)} | Review time: ${
       const result = zfs.skipPane(agentName);
       return {
         content: [{ type: "text", text: result
-          ? `Agent "${agentName}" skipped — pane terminated.`
+          ? `Agent "${agentName}" skipped - pane terminated.`
           : `Agent "${agentName}" not found running.` }],
       };
     },
@@ -6113,7 +6186,7 @@ Status: idle | Reviews: ${buildWidgetReviewStatus(fleetState)} | Review time: ${
       const zfs = ensureZFS();
       const info = zfs.getStatusBarInfo();
       if (!info.available) {
-        return { content: [{ type: "text", text: "ZFS not available — status bar requires Zellij." }] };
+        return { content: [{ type: "text", text: "ZFS not available - status bar requires Zellij." }] };
       }
       if (info.active) {
         zfs.destroyStatusBar();
@@ -6142,7 +6215,7 @@ Status: idle | Reviews: ${buildWidgetReviewStatus(fleetState)} | Review time: ${
   });
 
   // ============================================================================
-  // /bg-* commands — Background process management
+  // /bg-* commands - Background process management
   // ============================================================================
 
   // ---- /bg-start: Start fleet in background mode ----
