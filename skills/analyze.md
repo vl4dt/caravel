@@ -1,43 +1,83 @@
 ---
 name: analyze
-description: The /analyze command triggers the auditor agent to produce a saved ANALYSIS.md report in the project root. Use when the user types /analyze, asks to analyze a codebase, or wants a persistent audit report instead of just a chat response.
+description: The /analyze command performs a direct codebase scan (no delegation) and produces a saved ANALYSIS.md report in the project root. Use when the user types /analyze, asks to analyze a codebase, or wants a persistent audit report instead of just a chat response.
 ---
 
 # /analyze Command
 
 ## Purpose
 
-Run the auditor agent on the current project and **persist** its output to `ANALYSIS.md` in the project root. The report becomes a durable artifact that any agent on the fleet can read, reference, and update.
+Perform a direct codebase scan in the orchestrator and **persist** its output to `ANALYSIS.md` in the project root. The report becomes a durable artifact that any agent on the fleet can read, reference, and update.
+
+The orchestrator scans the codebase itself using `scanCodebase()`, `ls`, and `find` — no subagent delegation. This ensures:
+- Full visibility at all times (no silent failures from crashed subagents)
+- Guaranteed output (the orchestrator controls the scan end-to-end)
+- Error resilience (partial scans saved on failure)
 
 ## Invocation
 
-The user invokes this skill by typing `/analyze`. You may also trigger it programmatically:
+The user invokes this skill by typing `/analyze`. The orchestrator handles the scan directly.
 
+Programmatic invocation (for agent use):
 ```javascript
-subagent("auditor", "Analyze the current codebase and save the report to ANALYSIS.md in the project root.")
+// The /analyze command runs in the orchestrator automatically
+// No subagent delegation needed
 ```
 
 ## How It Works
 
-### 1. Trigger the Auditor
+### 1. Direct Codebase Scan
 
-Delegate to the auditor agent:
+The `/analyze` command performs the scan **directly in the orchestrator** — no delegation to a subagent. This ensures:
 
-```javascript
-subagent("auditor", "Analyze the current codebase and save the report to ANALYSIS.md in the project root.")
-```
+1. **Full visibility** — the orchestrator maintains awareness at all times, even if a subagent crashes
+2. **Reliable output** — `ANALYSIS.md` is always produced because the orchestrator reads the files itself
+3. **Error resilience** — no silent failures from a crashed subagent with empty output
 
-The auditor will:
+The scan performs:
 
-1. **Scan structure** — `ls` and `find` the directory layout
-2. **Read key files** — `package.json`, `README`, `docker-compose`, config files
-3. **Map dependencies** — identify external packages and internal module relationships
-4. **Check tests** — find test files, understand coverage status
-5. **Identify debt** — look for outdated patterns, code smells, missing docs
+1. **Structure scan** — `ls` and `find` the directory layout, file counts, directory counts
+2. **Key file reads** — `package.json`, `README.md`, `docker-compose`, config files
+3. **Dependency mapping** — identify external packages and internal module relationships
+4. **Test detection** — find test files, test framework, coverage indicators
+5. **Debt identification** — look for outdated patterns, code smells, missing docs
+6. **Language/framework detection** — auto-detect from package.json, config files, and source patterns
 
 ### Progress Feedback
 
-During execution, emit structured progress messages so the user always sees what's happening:
+The orchestrator emits structured progress during the scan:
+
+```
+🔍 Analyze: Scanning directory structure...
+🔍 Analyze: Reading key files (package.json, README, configs)...
+🔍 Analyze: Mapping dependencies...
+🔍 Analyze: Detecting test infrastructure...
+🔍 Analyze: Identifying technical debt...
+```
+
+### Error Handling
+
+The orchestrator has built-in error recovery:
+
+- **Process crashes** — detected via exit code -1 (signal termination), reported as CRITICAL
+- **Empty output** — exit code 0 with no output is caught and logged as a warning
+- **Non-zero exit** — captured in stderr, reported with full context
+- **Silent failures** — all agents are responsible for self-recovery (see `agents/*.md`)
+- **Error context injection** — on retry, agents receive their previous stderr, review feedback, and output to enable self-correction
+
+### Output
+
+After the scan completes, the orchestrator produces:
+
+1. **ANALYSIS.md** — the full analysis report
+2. **PROJECT-DESIGN.md** — architecture overview and design patterns (generated from scan results)
+3. **Fleet metadata** — agent used, model, tools, tokens, elapsed time, cost estimate
+
+If any step fails, the report includes:
+
+- **Errors** section listing what failed
+- **Suggestions** section with actionable next steps
+- **Partial output** from whatever the scan could complete
 
 ```
 🔍 Analyze: Codebase audit
@@ -63,24 +103,31 @@ During execution, emit structured progress messages so the user always sees what
 
 ### 2. Persist the Report
 
-The auditor MUST write its output to `ANALYSIS.md` in the project root. Do **not** rely on chat-only output. The file is the artifact.
+The orchestrator writes `ANALYSIS.md` to the project root. Do **not** rely on chat-only output. The file is the artifact.
 
 If `ANALYSIS.md` already exists:
 
 - **Overwrite** if the user explicitly re-ran `/analyze`
 - **Append** a "Last Updated" footer with a timestamp if the user only asked about the existing report
 
-### 3. Generate Auto-Artifacts
+### 3. Artifact Generation
 
-After the auditor finishes its analysis, **two additional artifacts** are auto-generated:
+After the scan completes, the orchestrator automatically generates:
 
-#### `PROJECT-DESIGN.md` — Design Document (from analysis)
-- Generated from the analysis phase output
-- Contains architecture overview, tech stack, design patterns, and structural findings
-- Serves as a durable design reference for all agents working on the project
-- Saved to the project root
+#### `ANALYSIS.md` — Full Analysis Report
+- Project overview, structure, tech stack
+- Architecture patterns and design decisions
+- Entry points and dependencies
+- Test coverage and technical debt findings
+- Security findings and recommendations
 
-#### `PROJECT-PLAN.md` — Project Plan (from planning phase)
+#### `PROJECT-DESIGN.md` — Design Document
+- Architecture overview from the scan
+- Tech stack summary
+- Design patterns detected
+- Links to the full analysis and plan
+
+#### `PROJECT-PLAN.md` — Project Plan
 - Generated when `plan_project()` is invoked after analysis
 - Contains phases, tasks, agent assignments, and implementation roadmap
 - Serves as the implementation blueprint the fleet executes
@@ -88,32 +135,25 @@ After the auditor finishes its analysis, **two additional artifacts** are auto-g
 
 ### 4. Confirm Completion
 
-After the auditor finishes:
+After analysis:
 
 1. Verify `ANALYSIS.md` exists and is non-empty
-2. Verify `PROJECT-DESIGN.md` was generated from the analysis
-3. Report back to the user with:
-   - Location of the reports: `ANALYSIS.md`, `PROJECT-DESIGN.md`
-   - Summary of findings (e.g., "Found 3 critical debt items, 2 medium")
-   - What the report covers
+2. Report back to the user with:
+   - Agent & model used
+   - Execution stats (elapsed time, turns, token counts, cost estimate)
+   - Pre-flight scan summary (files, directories, languages, frameworks, entry points)
+   - Key findings (critical, important, low-priority items)
+   - Coverage areas (project structure, tech stack, architecture, dependencies, test gaps, technical debt)
 
-```
-✓ Analysis complete. Reports saved to:
-  - ANALYSIS.md (detailed audit)
-  - PROJECT-DESIGN.md (architecture & design)
-  Findings: 3 critical, 2 medium, 1 low
-  Coverage: project structure, tech stack, architecture, dependencies, test gaps, technical debt
-```
+## Output Format (`ANALYSIS.md`)
 
-## Report Format (`ANALYSIS.md`)
-
-The auditor should produce the report in this structure:
+The orchestrator produces the report in this structure:
 
 ```markdown
 # Codebase Analysis Report
 
 > Generated: YYYY-MM-DD HH:MM UTC
-> Auditor: auditor agent
+> Orchestrator (direct scan — no subagent delegation)
 > Project: <project name>
 
 ## 1. Project Overview

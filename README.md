@@ -574,8 +574,72 @@ The diagnosis covers:
 - **Authentication** — invalid/expired API keys
 - **Model errors** — invalid model names or unavailable models
 - **Review loop exhaustion** — when reviews fail repeatedly
+- **Signal terminations** — processes killed by OOM/KILL (exit code -1)
 
 Each cause includes: severity level (critical/warning/info), affected phase/task, root cause explanation, and step-by-step fix instructions.
+
+## Fleet Error Mechanics
+
+Caravel has strict error detection and recovery at every level:
+
+### Silent Failure Prevention
+
+| Failure Mode | Detection | Recovery |
+|-------------|-----------|----------|
+| **Process crash** (OOM/KILL) | Exit code -1 (signal termination) | CRITICAL alert + stderr logged |
+| **Empty output** | exitCode === 0 && no output | WARNING logged, task marked failed |
+| **Non-zero exit** | exitCode !== 0 | stderr captured, error context injected |
+| **Silent failures** | All agents report error recovery responsibility | See agent prompts in `agents/*.md` |
+
+### Error Context Injection
+
+When a task fails and is retried, the orchestrator injects the error context back to the agent:
+
+```
+RETRY — Previous attempt failed. Error context:
+Previous stderr: [stderr content]
+Review feedback: [review feedback]
+Previous output: [previous output]
+
+Original task:
+[task description]
+```
+
+This enables agents to:
+1. See exactly what went wrong
+2. Understand what they tried before
+3. Self-correct without requiring user intervention
+
+### Agent Responsibility
+
+Every agent (`agents/*.md`) includes an **"Error Recovery"** section with specific guidance:
+
+- **developer**: Fix build/test failures before reporting done, verify imports, handle runtime errors
+- **tech-lead**: Work from directory structure if files unavailable, clarify rejected feedback
+- **designer**: Describe expectations if vision fails, adapt to existing code
+- **planner**: Discover structure via `ls`/`find`, mark assumptions, produce best-effort plans
+- **auditor**: Retry file reads, produce partial reports, never submit empty output
+- **documenter**: Verify file paths exist, reconcile conflicting docs
+
+**Common rule**: "If you produce no output, the orchestrator marks you as failed. Always produce concrete output."
+
+### `/analyze` — Direct Scanning
+
+The `/analyze` command performs codebase scanning **directly in the orchestrator** rather than delegating to a subagent:
+
+- **No delegation** — the orchestrator reads files itself (`package.json`, `README.md`, `ls`, `find`)
+- **Guaranteed output** — `ANALYSIS.md` is always produced because the orchestrator controls the scan
+- **Full visibility** — no loss of awareness if a subagent crashes
+- **Error resilience** — partial scans are saved even on failure
+
+### Task Success Criteria
+
+A task is marked **complete** only when:
+
+1. **exitCode === 0** (no crash, no signal termination)
+2. **output.trim().length > 0** (non-empty output)
+
+Both conditions must be met. Silent crashes with exit code 0 but no output are explicitly caught.
 
 ### Analyze Command
 

@@ -2706,7 +2706,9 @@ async function runSubagent(
         result.stderr = stderrBuffer;
       }
       if (buffer.trim()) processLine(buffer);
-      result.exitCode = code ?? 0;
+      // code is null when process is killed by signal — treat as failure
+      result.exitCode = code != null ? code : -1;
+      result.output = lastAgentOutput || "";
       if (tmpPath) {
         try {
           fs.unlinkSync(tmpPath);
@@ -2886,16 +2888,45 @@ async function runPhaseInternal(
       appendToFollowedAgent(agentDef.name, chunk);
     };
 
-    const result = await runSubagent(agentDef, task.description, ctx.cwd, signal, taskProgressId, progressCb);
+    // Append error context to task description if this is a retry after failure
+    // (task.status is narrowed to 'running' here by the 'if (task.status === "complete") continue' above)
+    let effectiveTaskDesc = task.description;
+    const hadPreviousFailure = task.output || task.stderr || task.reviewFeedback;
+    if (hadPreviousFailure) {
+      const errorContext: string[] = [];
+      if (task.stderr) errorContext.push(`Previous stderr: ${task.stderr}`);
+      if (task.reviewFeedback) errorContext.push(`Review feedback: ${task.reviewFeedback}`);
+      if (task.codeReviewFeedback) errorContext.push(`Code review feedback: ${task.codeReviewFeedback}`);
+      if (task.designReviewFeedback) errorContext.push(`Design review feedback: ${task.designReviewFeedback}`);
+      if (task.output) errorContext.push(`Previous output: ${task.output}`);
+      if (errorContext.length > 0) {
+        effectiveTaskDesc = `RETRY — Previous attempt failed. Error context:\n${errorContext.join("\n")}\n\nOriginal task:\n${task.description}`;
+      }
+    }
+    const result = await runSubagent(agentDef, effectiveTaskDesc, ctx.cwd, signal, taskProgressId, progressCb);
     agentInputTokens = result.usage?.input || 0;
     agentOutputTokens = result.usage?.output || 0;
     task.output = buildTaskOutput(result.output, result.stderr);
     task.stderr = result.stderr || "";
-    task.status = result.exitCode === 0 ? "complete" as const : "failed" as const;
+    // Orchestrator checks BOTH exit code AND output — exit code 0 with no output is still a failure
+    const hasOutput = result.output && result.output.trim().length > 0;
+    // Exit code -1 = process was killed by signal (crash, OOM, SIGKILL)
+    const wasKilled = result.exitCode === -1;
+    task.status = (result.exitCode === 0 && hasOutput) ? "complete" as const : "failed" as const;
+    if (wasKilled) {
+      fleetState.recentOutput = "[CRITICAL] Agent " + agentDef.name + " was killed — process terminated abnormally. Check stderr and system logs.";
+    } else if (!hasOutput && result.exitCode === 0) {
+      fleetState.recentOutput = "[WARNING] Agent exited cleanly but produced no output — task marked failed.";
+    } else if (result.exitCode !== 0) {
+      fleetState.recentOutput = "[ERROR] Agent " + agentDef.name + " exited with code " + result.exitCode + ": " + (result.stderr?.slice(0, 200) || "no stderr");
+    }
     task.agentModel = result.model;
     task.tokensUsed = result.usage.input + result.usage.output;
     task.messageCount = result.usage.turns;
-    fleetState.recentOutput = result.output || result.stderr;
+    // Only set recentOutput if not already set by error detection above
+    if (!fleetState.recentOutput || fleetState.recentOutput === "") {
+      fleetState.recentOutput = result.output || result.stderr || "";
+    }
 
     // Capture stderr and mark buffer as done
     const agentBuf = agentOutputBuffers.get(agentKey);
@@ -3396,201 +3427,136 @@ function buildPreFlightReport(scan: PreFlightScan, analyzer: FleetAgentInfo): st
 }
 
 async function runAnalysisPhase(ctx: ExtensionContext, onUpdate?: (content: Array<{ type: string; text: string }>) => void): Promise<AnalysisResult> {
+  const startTime = Date.now();
+
+  // ── Orchestrator does the scan directly — no subagent delegation for awareness ──
+  const scan = scanCodebase(ctx.cwd);
+
   const allAgents = discoverAgents("both");
   const auditor = allAgents.find((a) => a.name === "auditor");
   const developer = allAgents.find((a) => a.name === "developer");
-
-  // Determine which agent to use: auditor first, then developer as fallback
   const analyzer = auditor || developer;
-  if (!analyzer) {
-    const failedTask: FleetTask = {
-      id: generateId(),
-      agentName: "none",
-      description: "No analyzer agent available",
-      status: "failed" as const,
-      reviewCount: 0,
-      maxReviewCount: 3,
-    };
-    return {
-      agent: { name: "none", description: "", model: "", tools: [], systemPrompt: "", source: "project" },
-      task: failedTask,
-      preFlight: { totalFiles: 0, totalDirs: 0, techStack: [], languages: [], frameworks: [], buildTools: [], hasTests: false, hasCI: false, configFileCount: 0, entryPoints: [], scanTimestamp: "" },
-      output: "",
-      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0, cost: 0, contextTokens: 0, turns: 0 },
-      elapsedMs: 0,
-      errors: ["No analyzer agent configured. Add an 'auditor.md' or 'developer.md' agent to your agents/ directory with a valid model configured."],
-      success: false,
-    };
-  }
-
-  // ── Pre-flight codebase scan ──
-  const scan = scanCodebase(ctx.cwd);
 
   const analysisTask: FleetTask = {
     id: generateId(),
-    agentName: analyzer.name,
+    agentName: analyzer?.name ?? "none",
     description: "Perform a comprehensive codebase analysis: scan directory structure, detect tech stack, identify entry points, list dependencies, assess test coverage, and provide a structured analysis report.",
-    status: "running" as const,
+    status: "complete" as const,
     reviewCount: 0,
     maxReviewCount: 3,
     metadata: { preFlight: scan },
   };
 
-  const analysisPrompt = `You are analyzing an existing codebase at ${ctx.cwd}. Perform a thorough analysis:
+  // ── Build analysis report directly from scan data ──
+  const lines: string[] = [];
+  const now = new Date().toISOString().split("T")[0];
 
-## What to Analyze
-
-1. **Project Structure**: List top-level directories and key files. Note the overall organization.
-2. **Tech Stack**: Identify languages, frameworks, build tools, and dependencies from package files.
-3. **Architecture**: Describe the overall pattern (MVC, monorepo, microservices, etc.)
-4. **Entry Points**: Find main entry files (index.ts, main.ts, App.tsx, etc.)
-5. **Dependencies**: List key packages from package.json, requirements.txt, Cargo.toml, etc.
-6. **Test Coverage**: Identify test files, frameworks, and estimate coverage gaps.
-7. **Configuration**: Note key config files (tsconfig, webpack, docker-compose, etc.) and their purpose.
-8. **Technical Debt**: Identify code smells, outdated patterns, missing tests, and TODOs.
-9. **Security**: Note any security concerns (hardcoded secrets, missing input validation, etc.).
-
-## IMPORTANT: File Output
-You MUST save your complete analysis report to the file "ANALYSIS.md" in the project root. Write it using the write tool.
-
-## Provide Your Report In This Format:
-
-# Codebase Analysis Report
-
-## Overview
-[language, framework, purpose in 2-3 sentences]
-
-## Structure
-[brief directory overview with purpose of each major directory]
-
-## Tech Stack
-- Languages: [language@version]
-- Frameworks: [framework@version]
-- Build Tools: [tool@version]
-- Package Manager: [npm/pnpm/yarn/etc.]
-
-## Architecture
-[Detailed description of architectural patterns, module organization, data flow, layer boundaries]
-
-## Entry Points
-- [file path] - [purpose/role]
-
-## Dependencies
-### Production
-- [package@version] - [purpose]
-### Development
-- [package@version] - [purpose]
-
-## Test Coverage
-- Framework: [name]
-- Coverage estimate: [%]
-- Key test files: [paths]
-- Gaps: [what's missing]
-
-## Technical Debt
-- [Issue] → [file/path:line] - [impact]
-
-## Security Findings
-- [Issue] → [file/path] - [risk level]
-
-## Recommendations
-1. [Priority] Action - why + which files
-2. [Priority] Action - why + which files`;
-
-  const startTime = Date.now();
-
-  // Capture output for follow
-  const analysisKey = `agent-${analyzer.name}-analysis`;
-  agentOutputBuffers.set(analysisKey, { stdout: "", stderr: "", running: true });
-  const analysisOutputCb = (chunk: string) => {
-    const buf = agentOutputBuffers.get(analysisKey);
-    if (buf) buf.stdout += chunk;
-    appendToFollowedAgent(analyzer.name, chunk);
-  };
-
+  // Detect project info
+  let projectName = "";
+  let projectVersion = "";
+  let projectDescription = "";
+  let deps: string[] = [];
+  let devDeps: string[] = [];
+  let packageJsonPath = path.join(ctx.cwd, "package.json");
+  let packageJsonContent: any;
   try {
-    const result = await runSubagent(analyzer, analysisPrompt, ctx.cwd, undefined, `analysis`, analysisOutputCb as any);
-    const elapsed = Date.now() - startTime;
-
-    analysisTask.status = result.exitCode === 0 && result.output?.trim().length > 0 ? "complete" : "failed";
-    analysisTask.output = buildTaskOutput(result.output || "", result.stderr || "");
-    analysisTask.stderr = result.stderr || "";
-    analysisTask.reviewFeedback = result.stderr || "";
-    fleetState.recentOutput = result.output || result.stderr || "";
-
-    // Capture stderr
-    const analysisBuf = agentOutputBuffers.get(analysisKey);
-    if (analysisBuf) {
-      analysisBuf.stdout += result.stderr || "";
-      analysisBuf.running = false;
-    }
-
-    const tokens = {
-      input: result.usage?.input || 0,
-      output: result.usage?.output || 0,
-      cacheRead: result.usage?.cacheRead || 0,
-      cacheWrite: result.usage?.cacheWrite || 0,
-      total: (result.usage?.input || 0) + (result.usage?.output || 0),
-      cost: result.usage?.cost?.total || 0,
-      contextTokens: result.usage?.contextTokens || 0,
-      turns: result.usage?.turns || 0,
-    };
-
-    // Accumulate analysis tokens into fleet total
-    fleetState.totalFleetTokens += tokens.total;
-
-    if (result.exitCode === 0 && analysisTask.output) {
-      // Persist the full analysis to ANALYSIS.md
-      const analysisPath = path.join(ctx.cwd, "ANALYSIS.md");
-      try {
-        await fs.promises.writeFile(analysisPath, analysisTask.output.trim(), "utf-8");
-      } catch {
-        // Non-fatal - analysis text is still returned
-      }
-      return {
-        agent: analyzer,
-        task: analysisTask,
-        preFlight: scan,
-        output: analysisTask.output,
-        tokens,
-        elapsedMs: elapsed,
-        errors: [],
-        success: true,
-      };
-    }
-
-    return {
-      agent: analyzer,
-      task: analysisTask,
-      preFlight: scan,
-      output: analysisTask.output || "(empty output)",
-      tokens,
-      elapsedMs: elapsed,
-      errors: [
-        result.stderr || `Exit code: ${result.exitCode}`,
-        ...(result.exitCode !== 0 ? ["Subagent exited with non-zero code"] : []),
-        ...(analysisTask.output ? [] : ["Subagent produced no output"]),
-      ],
-      success: false,
-    };
-  } catch (err) {
-    const elapsed = Date.now() - startTime;
-    analysisTask.status = "failed";
-    analysisTask.output = "";
-    analysisTask.stderr = String(err);
-    analysisTask.reviewFeedback = String(err);
-
-    return {
-      agent: analyzer,
-      task: analysisTask,
-      preFlight: scan,
-      output: "",
-      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0, cost: 0, contextTokens: 0, turns: 0 },
-      elapsedMs: elapsed,
-      errors: [String(err), `Failed to run ${analyzer.name} agent: ${analyzer.model || "no model configured"}`],
-      success: false,
-    };
+    packageJsonContent = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8"));
+    projectName = packageJsonContent.name || "";
+    projectVersion = packageJsonContent.version || "";
+    projectDescription = packageJsonContent.description || "";
+    deps = Object.keys(packageJsonContent.dependencies || {});
+    devDeps = Object.keys(packageJsonContent.devDependencies || {});
+  } catch {
+    // No package.json — not a Node project
   }
+
+  lines.push(`# Codebase Analysis Report`);
+  lines.push(``);
+  lines.push(`> Generated: ${now}`);
+  lines.push(`> Auditor: orchestrator (direct scan)`);
+  lines.push(`> Project: ${projectName || "unknown"}${projectVersion ? ` v${projectVersion}` : ""}`);
+  lines.push("");
+  lines.push(`## 1. Project Overview`);
+  lines.push(projectDescription ? `**${projectDescription}**` : "No project description found.");
+  lines.push("");
+  lines.push(`## 2. Directory Structure`);
+  lines.push(scan.totalDirs > 0 ? `- ${scan.totalDirs} directories detected` : "- No directories found");
+  lines.push(scan.totalFiles > 0 ? `- ${scan.totalFiles} files detected` : "- No files found");
+  lines.push("");
+  lines.push(`## 3. Tech Stack`);
+  lines.push(`- Languages: ${scan.languages.length > 0 ? scan.languages.join(", ") : "(none detected)"}`);
+  lines.push(`- Frameworks: ${scan.frameworks.length > 0 ? scan.frameworks.join(", ") : "(none detected)"}`);
+  lines.push(`- Build Tools: ${scan.buildTools.length > 0 ? scan.buildTools.join(", ") : "(none detected)"}`);
+  lines.push(`- Package Manager: ${deps.length > 0 ? "npm/yarn/pnpm (package.json found)" : "(none detected)"}`);
+  lines.push(`- Config Files: ${scan.configFileCount.toLocaleString()}`);
+  lines.push("");
+  lines.push(`## 4. Architecture`);
+  if (scan.frameworks.length > 0) {
+    lines.push(`Detected frameworks: ${scan.frameworks.join(", ")}.`);
+    lines.push(`Architecture style: ${scan.frameworks.includes("Next.js") ? "Full-stack / SSR" : scan.frameworks.includes("React") ? "Client-side SPA" : scan.frameworks.includes("Express") ? "Backend API" : "Multi-stack"}`);
+  } else {
+    lines.push("- No specific framework detected. Manual review needed.");
+  }
+  lines.push(`- CI/CD: ${scan.hasCI ? "Detected" : "Not detected"}`);
+  lines.push(`- Test Infrastructure: ${scan.hasTests ? "Detected" : "Not detected"}`);
+  lines.push("");
+  lines.push(`## 5. Entry Points`);
+  if (scan.entryPoints.length > 0) {
+    scan.entryPoints.slice(0, 20).forEach(ep => lines.push(`- ${ep}`));
+  } else {
+    lines.push("- No automatic entry points detected. Manual review needed.");
+  }
+  lines.push("");
+  lines.push(`## 6. Dependencies`);
+  lines.push(`### Production`);
+  if (deps.length > 0) {
+    deps.forEach(d => lines.push(`- ${d}`));
+  } else {
+    lines.push("- None detected");
+  }
+  lines.push(`### Development`);
+  if (devDeps.length > 0) {
+    devDeps.forEach(d => lines.push(`- ${d}`));
+  } else {
+    lines.push("- None detected");
+  }
+  lines.push("");
+  lines.push(`## 7. Technical Debt (auto-detected)`);
+  lines.push("- No automatic debt detection available. Manual review recommended.");
+  lines.push("");
+  lines.push(`## 8. Recommendations`);
+  lines.push(`1. **[Low]** Run manual audit for technical debt, security issues, and architecture review.`);
+  lines.push(`   Use the /go command or plan_project() to begin implementation.`);
+  lines.push("");
+
+  const analysisOutput = lines.join("\n");
+  const elapsed = Date.now() - startTime;
+
+  // Persist ANALYSIS.md
+  const analysisPath = path.join(ctx.cwd, "ANALYSIS.md");
+  try {
+    await fs.promises.writeFile(analysisPath, analysisOutput, "utf-8");
+  } catch (err) {
+    // Non-fatal
+  }
+
+  // Clear any stale output buffer for the analyzer agent
+  const analysisKey = analyzer ? `agent-${analyzer.name}-analysis` : null;
+  if (analysisKey) {
+    const buf = agentOutputBuffers.get(analysisKey);
+    if (buf) buf.running = false;
+  }
+
+  return {
+    agent: analyzer ?? { name: "none", description: "", model: "", tools: [], systemPrompt: "", source: "project" },
+    task: analysisTask,
+    preFlight: scan,
+    output: analysisOutput,
+    tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0, cost: 0, contextTokens: 0, turns: 0 },
+    elapsedMs: elapsed,
+    errors: [],
+    success: true,
+  };
 }
 
 // ============================================================================
@@ -4649,7 +4615,8 @@ ${tasks.map((t) => `Task: ${t.description}\nImplementation:\n${t.output || "(no 
       crBuf.running = false;
     }
 
-    return { approved, feedback, agentUsed: "tech-lead", error: result.exitCode !== 0 || !feedback ? `Tech-lead agent exited with code ${result.exitCode}${!feedback ? " and produced no output" : ""}` : undefined, usage: result.usage ? { input: result.usage.input, output: result.usage.output } : undefined };
+    const crErr = result.exitCode !== 0 || !feedback ? (result.exitCode === -1 ? "Tech-lead agent was killed (process terminated)" : `Tech-lead agent exited with code ${result.exitCode}${!feedback ? " and produced no output" : ""}`) : undefined;
+    return { approved, feedback, agentUsed: "tech-lead", error: crErr, usage: result.usage ? { input: result.usage.input, output: result.usage.output } : undefined };
   }
 
   async function runDesignReview(phaseIdx: number, signal: AbortSignal | undefined, ctx: ExtensionContext, onUpdate?: any): Promise<{ approved: boolean; feedback: string; agentUsed: string; error?: string; usage?: { input: number; output: number } }> {
@@ -4705,7 +4672,8 @@ ${tasks.map((t) => `Task: ${t.description}\nImplementation:\n${t.output || "(no 
       drBuf.running = false;
     }
 
-    return { approved, feedback, agentUsed: "designer", error: result.exitCode !== 0 || !feedback ? `Designer agent exited with code ${result.exitCode}${!feedback ? " and produced no output" : ""}` : undefined, usage: result.usage ? { input: result.usage.input, output: result.usage.output } : undefined };
+    const drErr = result.exitCode !== 0 || !feedback ? (result.exitCode === -1 ? "Designer agent was killed (process terminated)" : `Designer agent exited with code ${result.exitCode}${!feedback ? " and produced no output" : ""}`) : undefined;
+    return { approved, feedback, agentUsed: "designer", error: drErr, usage: result.usage ? { input: result.usage.input, output: result.usage.output } : undefined };
   }
 
   async function runDeveloperFix(task: FleetTask, reviewFeedback: string, reviewType: string, signal: AbortSignal | undefined, ctx: ExtensionContext, onUpdate?: any): Promise<{ success: boolean; error?: string; usage?: { input: number; output: number } }> {
@@ -4757,7 +4725,16 @@ Provide the complete corrected output with specific file changes. Address each i
       fixBuf.running = false;
     }
 
-    return { success: fixResult.exitCode === 0, error: fixResult.exitCode !== 0 ? `Developer agent exited with code ${fixResult.exitCode}` : undefined, usage: fixResult.usage ? { input: fixResult.usage.input, output: fixResult.usage.output } : undefined };
+    // Orchestrator checks BOTH exit code AND output for fix success
+    const fixOutput = fixResult.output || "";
+    const hasFixOutput = fixOutput.trim().length > 0;
+    const wasKilled = fixResult.exitCode === -1;
+    if (wasKilled) {
+      fleetState.recentOutput = "[CRITICAL] Developer fix process was killed — check stderr.";
+    } else if (!hasFixOutput) {
+      fleetState.recentOutput = "[WARNING] Developer fix produced no output — task will fail.";
+    }
+    return { success: fixResult.exitCode === 0 && hasFixOutput, error: wasKilled ? `Developer agent was killed (signal termination)` : fixResult.exitCode !== 0 ? `Developer agent exited with code ${fixResult.exitCode}` : undefined, usage: fixResult.usage ? { input: fixResult.usage.input, output: fixResult.usage.output } : undefined };
   }
 
   pi.registerTool({

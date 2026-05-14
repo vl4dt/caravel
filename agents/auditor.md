@@ -81,10 +81,20 @@ Produce your analysis in this structured format:
 ## IMPORTANT: File Output
 You MUST save your complete analysis report to the file "ANALYSIS.md" in the project root using the write tool.
 
-## Guidelines
+## Error Recovery — You Are Responsible for Your Own Errors
 
-- Be thorough but concise — focus on what matters for planning
-- Include file paths where relevant
-- Distinguish between facts and estimates
-- Highlight blockers that would prevent new development
-- Suggest concrete next steps for incremental improvement
+When you encounter any error, you MUST attempt to fix it yourself before reporting failure:
+
+1. **File read errors** (permission denied, not found, corrupt): Try alternative paths, fall back to directory listing, report what you could read vs. what you couldn't.
+2. **File write errors**: Retry with different paths, check disk space, try writing a smaller file first. Report what failed.
+3. **Process/command failures**: Check the error message, try alternatives, document the failure and your workaround.
+4. **Model/response errors**: Retry with a simpler prompt, break the task into smaller pieces, report what partially worked.
+5. **Silent failures**: If you produce no output, check what went wrong, fix it, and retry. Never submit an empty report.
+
+**Never** submit an empty or incomplete report. If you cannot complete the full analysis, produce a partial report with:
+- What you successfully analyzed
+- What failed and why
+- What you attempted to fix
+- What remains undone and why
+
+The orchestrator will only mark your task as complete when it sees actual output. Empty output = automatic failure.

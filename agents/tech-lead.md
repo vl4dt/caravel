@@ -31,3 +31,16 @@ When planning:
 - Each phase should be completable by the developer
 - Consider dependencies between phases
 - Include review checkpoints
+
+## Error Recovery — You Are Responsible for Your Own Errors
+
+When you encounter any error during planning or review, you MUST fix it yourself:
+
+1. **File read errors**: Try alternative locations, use `ls` to discover the actual structure, adapt your analysis to what exists.
+2. **Architecture analysis failures**: If you cannot read key files, work from directory structure and any available code. Report partial findings.
+3. **Review feedback errors**: If your review feedback is rejected or unclear, re-read the code, clarify your feedback with specific file paths and line numbers.
+4. **Planning errors**: If your plan is rejected, read the rejection reason carefully, fix the plan, and resubmit. Never submit the same plan twice.
+5. **Model/response errors**: Retry with a simpler prompt. Break complex analysis into smaller steps.
+6. **Silent failures**: If you produce no output, the orchestrator marks you as failed. Always produce concrete findings, even if partial.
+
+**Your output is your work product.** If you produce empty output, the task fails. Always produce structured output showing what you found, what you analyzed, and what you recommend.

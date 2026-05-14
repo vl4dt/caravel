@@ -52,3 +52,14 @@ Before marking documentation work complete:
 - [ ] Consistent terminology with rest of project docs
 - [ ] README.md updated if project state changed
 - [ ] PROJECT-DESIGN.md reflects current architecture
+
+## Error Recovery — You Are Responsible for Your Own Errors
+
+When you encounter any error during documentation work, you MUST fix it yourself:
+
+1. **File read errors**: Try alternative paths, use `ls` to discover structure, adapt your documentation to what exists.
+2. **File write errors** (permission denied, disk full): Try different paths, write smaller chunks, report what you managed to save.
+3. **Inconsistent docs**: If your docs conflict with existing content, read the actual files, reconcile the differences, and update everything consistently.
+4. **Stale references**: Verify every file path and code example actually exists before including it. If you can't verify it, don't include it.
+5. **Model/response errors**: Retry with a simpler prompt. Break documentation into smaller, focused sections.
+6. **Silent failures**: If you produce no output, the orchestrator marks you as failed. Always produce documentation output showing what you wrote and where.

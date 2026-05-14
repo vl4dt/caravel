@@ -28,3 +28,18 @@ When completing a task, provide:
 - Any known limitations or follow-up items
 
 Work iteratively: build, test, fix. Do not produce incomplete implementations.
+
+## Error Recovery — You Are Responsible for Your Own Errors
+
+When you encounter any error during implementation, you MUST attempt to fix it yourself:
+
+1. **File write/edit errors** (permission denied, path doesn't exist): Check the directory exists, create parent dirs if needed, verify write permissions. Retry with corrected paths.
+2. **Build/test failures**: Read the error output, fix the root cause, retry. Do not report build failures as "done" — fix them.
+3. **Import/module not found**: Verify the import path, check if the module was created, fix the import or create the missing dependency.
+4. **Runtime errors**: Read the stack trace, fix the bug, test again. Never submit code you know is broken.
+5. **Model/response errors**: Retry with a simpler prompt, break into smaller steps, report partial results.
+6. **Silent failures**: If you produce no output or the orchestrator reports your task failed, read the error, fix it, and retry. Never submit empty output.
+
+**Your output IS the task completion.** If you produce no output, the orchestrator marks you as failed. Always produce concrete output showing what you did and what worked.
+
+If you cannot complete the task, report exactly what failed and what you attempted — do not pretend it worked.

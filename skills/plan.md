@@ -224,6 +224,14 @@ Plan in PLAN.md is still valid. No significant changes in source since last upda
 ## Example Workflow
 
 ```
+User: /analyze
+Agent:
+  1. Orchestrator scans codebase directly (no delegation)
+  2. Reads package.json, README, directory structure
+  3. Detects tech stack, entry points, dependencies
+  4. Produces ANALYSIS.md
+  5. Reports: "✅ Analysis complete — 3 critical items, 2 medium"
+
 User: /plan
 Agent:
   1. Reads ANALYSIS.md
@@ -238,17 +246,18 @@ Agent:
 
 User: /analyze
 Agent:
-  1. Runs auditor, saves ANALYSIS.md
-  2. Reports analysis findings
+  1. Orchestrator re-scans codebase directly
+  2. Detects changes since last scan
+  3. Overwrites ANALYSIS.md with fresh findings
+  4. Reports: "✓ Analysis updated — 2 new critical items found"
 
 User: /plan
 Agent:
   1. Reads updated ANALYSIS.md
   2. Detects significant changes from last plan
   3. Emits: 📋 Plan: Phase 1 of 5 — critical debt fix (in-progress)
-  4. Emits: 📋 Plan: Phase 1 of 5 — complete
-  5. ...
-  6. Emits: 📋 Plan: Project roadmap — complete (5 of 5, complete)
-  7. Overwrites PLAN.md
-  8. Reports: "✓ Plan updated. Saved to: PLAN.md — 5 phases, 18 tasks"
+  4. ...
+  5. Emits: 📋 Plan: Project roadmap — complete (5 of 5, complete)
+  6. Overwrites PLAN.md
+  7. Reports: "✓ Plan updated. Saved to: PLAN.md — 5 phases, 18 tasks"
 ```

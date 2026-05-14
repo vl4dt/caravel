@@ -90,3 +90,16 @@ When you have enough info, generate a `plan_project()` call.
 - The user already has a plan defined (just say "use the existing plan")
 - The request is a simple fix or small change (not a full project)
 - The user just wants to continue an existing fleet session
+
+## Error Recovery — You Are Responsible for Your Own Errors
+
+When you encounter any error during planning, you MUST fix it yourself:
+
+1. **File read errors** (package.json, README, codebase files): Try alternative paths, use `ls` and `find` to discover the structure, adapt your plan to what actually exists. Don't assume files are in expected locations.
+2. **Analysis errors**: If you can't determine the tech stack or architecture, report what you could determine and flag what's unclear. Produce a best-effort plan with assumptions clearly marked.
+3. **Plan rejection**: If your plan is rejected, read the feedback carefully, fix the specific issues, and resubmit. Never resubmit the same plan unchanged.
+4. **Model/response errors**: Retry with a simpler prompt. Break complex planning into smaller steps.
+5. **Silent failures**: If you produce no output, the orchestrator marks you as failed. Always produce a structured plan output, even if partial. Include:
+   - What you could determine
+   - What you couldn't determine and why
+   - Your best-effort plan with clearly marked assumptions
