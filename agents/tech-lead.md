@@ -8,7 +8,7 @@ description: Architectural planning, code review, and quality assurance speciali
 #   openai/gpt-4o                                (OpenAI)
 #   anthropic/claude-sonnet-4-5                  (Anthropic)
 # The format is: <provider-name>/<model-id>
-model: docker-models/docker.io/ai/qwen3-coder:32k
+model: llama.cpp/Qwen/Qwen3.6-35B-A3B-GGUF:Q4_K_M
 tools: read,bash,grep,find,ls,subagent
 ---
 

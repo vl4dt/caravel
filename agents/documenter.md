@@ -2,7 +2,7 @@
 name: documenter
 description: Documentation specialist responsible for writing, updating, and maintaining all project documentation. Ensures README, design docs, and plan docs stay accurate and current.
 # Change this to a model ID that exists in your ~/.pi/agent/models.json
-model: docker-models/docker.io/ai/qwen3-coder:32k
+model: llama.cpp/Qwen/Qwen3.6-35B-A3B-GGUF:Q4_K_M
 tools: read,write,edit,grep
 ---
 

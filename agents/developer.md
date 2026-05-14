@@ -9,7 +9,7 @@ description: Senior implementation specialist with full file system access. Writ
 #   anthropic/claude-sonnet-4-5                  (Anthropic)
 #   docker-models/docker.io/ai/qwen3-coder:32k   (Docker)
 # The format is: <provider-name>/<model-id>
-model: docker-models/docker.io/ai/qwen3-coder:32k
+model: llama.cpp/Qwen/Qwen3.6-35B-A3B-GGUF:Q4_K_M
 tools: read,write,edit,bash,grep,find,ls
 ---
 

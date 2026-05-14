@@ -10,7 +10,7 @@ description: UI/UX design specialist with vision capabilities. Analyzes screensh
 #   google/gemini-pro-vision            (Google — vision)
 #   docker-models/docker.io/ai/glm-4.7-flash:32k  (Docker — vision)
 # The format is: <provider-name>/<model-id>
-model: docker-models/docker.io/ai/glm-4.7-flash:32k
+model: llama.cpp/Qwen/Qwen3.6-35B-A3B-GGUF:Q4_K_M
 tools: read,bash,grep,find,ls
 ---
 
