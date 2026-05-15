@@ -124,13 +124,11 @@ function mergeConfig(base: CaravelConfig, partial: CaravelConfig): CaravelConfig
     };
   }
 
-  // defaults → deep merge healthThresholds
+  // defaults — deep merge subfields
   if (partial.defaults) {
     merged.defaults = {
       ...merged.defaults,
-      ...(partial.defaults.healthThresholds
-        ? { healthThresholds: { ...merged.defaults?.healthThresholds, ...partial.defaults.healthThresholds } }
-        : {}),
+      ...partial.defaults,
     };
   }
 

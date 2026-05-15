@@ -340,6 +340,7 @@ export function nudgeAgent(
   agentIdentity: string,
   checkpoint: NudgeCheckpoint,
   maxNudges: number = 2,
+  stalenessSec?: number,
 ): NudgeResult {
   if (!agentIdentity || typeof agentIdentity !== "string" || agentIdentity.trim().length === 0) {
     throw new Error("nudgeAgent: agentIdentity must be a non-empty string");
@@ -351,10 +352,11 @@ export function nudgeAgent(
     throw new Error("nudgeAgent: maxNudges must be >= 1");
   }
 
-  // Compute staleness in seconds (rounded)
-  const stalenessMs = Number.MAX_SAFE_INTEGER;
-  const stalenessSec = Math.round(stalenessMs / 1000);
-  const context = `[NUDGE: Agent stuck for ${stalenessSec}s]`;
+  // Use provided staleness or fall back to a placeholder
+  const staleness = stalenessSec != null ? stalenessSec : -1;
+  const context = staleness >= 0
+    ? `[NUDGE: Agent stuck for ${staleness}s]`
+    : `[NUDGE: Agent stuck]`;
 
   // Increment per-agent nudge count
   const currentCount = (nudgeCounts.get(agentIdentity) ?? 0) + 1;
@@ -558,7 +560,7 @@ function runHealthCheck(): void {
       taskId: `health-check-${agent.agent}`,
       agentName: agent.agent,
     };
-    nudgeAgent(agent.agent, checkpoint);
+    nudgeAgent(agent.agent, checkpoint, 2, agent.duration);
   }
 }
 

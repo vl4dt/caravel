@@ -23,19 +23,19 @@ allowed-tools: plan_project,run_phase,review_task,fleet_control,fleet_status,fle
 ### Scenario 1: Take Over an Existing Codebase
 
 ```
-analyze   →  /analyze  →  ANALYSIS.md  →  /plan  →  PLAN.md  →  /caravel-go  →  execute
+analyze   →  /analyze  →  ANALYSIS.md  →  /plan  →  PLAN.md  →  /go  →  execute
 ```
 
 1. **Analyze** — run `/analyze` to produce `ANALYSIS.md`
 2. **Plan** — run `/plan` to convert analysis into phases/tasks → `PLAN.md`
-3. **Execute** — run `/caravel-go` to auto-orchestrate the fleet
+3. **Execute** — run `/go` to auto-orchestrate the fleet
 4. **Monitor** — watch via widget bar or `fleet_status`
 
 ### Scenario 2: Start a New Project
 
 1. **Describe** what you want in natural language
 2. **Plan** — `plan_project()` to decompose into phases
-3. **Execute** — `/caravel-go` auto-orchestrates phases with review
+3. **Execute** — `/go` auto-orchestrates phases with review
 4. **Iterate** — fix review feedback, advance to next phase
 
 ### Scenario 3: ZFS Mode (Terminal Fleet)
@@ -54,7 +54,6 @@ analyze   →  /analyze  →  ANALYSIS.md  →  /plan  →  PLAN.md  →  /carav
 | `ANALYSIS.md` | Yes (from `/analyze`) | Codebase analysis report |
 | `PLAN.md` | Yes (from `/plan`) | Project plan with phases and tasks |
 | `PROJECT-DESIGN.md` | Yes (from `/analyze`) | Architecture/design overview |
-| `PROJECT-PLAN.md` | Yes (from `/plan`) | Project roadmap |
 | `SKILL.md` | No | Main skill definition (this file) |
 
 ---
@@ -102,7 +101,7 @@ User: "I want to build a kanban board app with drag-and-drop"
 ```
 
 You respond:
-1. **If scope is clear** — Plan the project yourself using `plan_project`, then run `/caravel-go`:
+1. **If scope is clear** — Plan the project yourself using `plan_project`, then run `/go`:
    ```javascript
    plan_project({ name: "...", phases: [...] })
    fleet_control(action = "go")  // auto-runs all phases with review between each
@@ -117,16 +116,16 @@ User: "I want to add dark mode to this existing React app"
 You respond:
 1. **Analyze** — run `/analyze` to produce `ANALYSIS.md` with full codebase scan
 2. **Plan** — run `/plan` to convert analysis into phases/tasks → `PLAN.md`
-3. **Execute** — run `/caravel-go` to auto-orchestrate the fleet
+3. **Execute** — run `/go` to auto-orchestrate the fleet
 4. **Monitor** — watch progress via the widget bar or `fleet_status`
 
 If the user wants to jump straight to planning:
 1. **Plan** — `plan_project()` directly if scope is clear
-2. **Execute** — `/caravel-go` to run phases with review
+2. **Execute** — `/go` to run phases with review
 
-### The /caravel-go Command
+### The /go Command
 
-The `/caravel-go` command is your workhorse — it auto-orchestrates the fleet:
+The `/go` command is your workhorse — it auto-orchestrates the fleet:
 - Runs all phases sequentially
 - Triggers review between each phase
 - Auto-fixes review issues
@@ -176,7 +175,7 @@ fleet_control(action = "pause")   // Saves state to disk, blocks execution
 fleet_control(action = "resume")  // Loads saved state, unblocks execution
 ```
 
-State survives process termination, system restart, and blackouts. On next `run_phase()` or `/caravel-go`, the saved state is auto-loaded.
+State survives process termination, system restart, and blackouts. On next `run_phase()` or `/go`, the saved state is auto-loaded.
 
 ### Background Mode
 
@@ -376,97 +375,6 @@ Developer completes task
 
 Each task tracks: `codeReviewStatus` (approved/needs_fix) and `designReviewStatus` (approved/needs_fix).
 Both must be approved for the task to be complete.
-
-## Metrics Collection
-
-Caravel collects and exports metrics for analysis, reporting, and budgeting. See `notes/metrics-spec.md` for full spec.
-
-**Collected metrics:**
-- Task duration (per task, per agent)
-- Review cycle count per task
-- Tokens per agent (input/output)
-- Pass/fail rates per review stage
-- Phase timing and completion status
-
-**Export formats:** JSON (structured) and CSV (spreadsheet-compatible)
-
-```javascript
-import { createFleetMetrics } from "./metrics";
-const metrics = createFleetMetrics(fleetState, startTime);
-await metrics.saveToFile(process.cwd());
-// Saves to .caravel/metrics-{timestamp}.json and .caravel/metrics-{timestamp}.csv
-```
-
-## Integrations
-
-### Telegram Notifications
-
-Send task start/complete/failure messages, review results, and monitoring updates to a Telegram chat.
-
-```typescript
-import { sendTelegramNotification } from "./integrations/telegram";
-
-const config = {
-  botToken: "YOUR_BOT_TOKEN",
-  chatId: "-100XXXXXXXXXX",
-  enabled: true,
-  monitorMode: false,  // or true for read-only monitoring
-};
-
-await sendTelegramNotification(config, {
-  type: "task_complete",
-  content: "Task completed",
-  data: { task: "T3", agent: "developer", phase: "P1", durationMs: 45000 },
-});
-```
-
-### Linear Integration
-
-Sync tasks to Linear issues — create/update issues, sync status, webhooks.
-
-```typescript
-import { syncTaskToLinear } from "./integrations/linear";
-
-const config = {
-  apiKey: "lin_api_xxx",
-  teamId: "TEAM_ID",
-  projectId: "PROJECT_ID",
-  enabled: true,
-};
-
-await syncTaskToLinear(config, {
-  taskId: "t1",
-  phase: "P1",
-  agent: "developer",
-  description: "Create Button component",
-  status: "complete",
-});
-```
-
-### Plane Integration
-
-Sync tasks to Plane issues — same pattern as Linear but adapted to Plane's API.
-
-```typescript
-import { syncTaskToPlane } from "./integrations/plane";
-
-const config = {
-  apiKey: "api_key_xxx",
-  workspaceSlug: "my-workspace",
-  projectSlug: "my-project",
-  enabled: true,
-  issueTypeName: "Story",
-};
-
-await syncTaskToPlane(config, {
-  taskId: "t1",
-  phase: "P1",
-  agent: "developer",
-  description: "Create Button component",
-  status: "complete",
-});
-```
-
 ## ZFS Mode — Zellij Fleet Session
 
 Caravel can run the fleet inside a dedicated [Zellij](https://zellij.dev) terminal multiplexer for a full terminal-based fleet workspace.
@@ -538,7 +446,7 @@ Switch during execution: `zellij action switch-layout <name>`
 
 ---
 
-Toggle visibility with `/caravel-fleet`. The widget bar shows:
+Toggle visibility with `/fleet`. The widget bar shows:
 - **Line 1**: Top border `╔...╗`
 - **Line 2**: `CARAVEL FLEET` header + current status (IDLE/RUNNING/PAUSED/DONE/FAILED)
 - **Line 3**: Current phase + progress bar (e.g. `[████████░░░░░░░░] 40%`] + task count + elapsed time

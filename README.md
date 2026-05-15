@@ -279,101 +279,6 @@ Two complementary views for fleet monitoring, plus natural-language control comm
 | `reset` / `start over` | Reset fleet state |
 | `review this phase` | Trigger manual review |
 
-### Configuration Examples
-
-Concrete configuration patterns for common setups. Every example shows the full `models.json` and agent model references.
-
-**All-local setup (llama.cpp + lm-studio):**
-```json
-{
-  "llama.cpp": {
-    "baseUrl": "http://localhost:9090/v1",
-    "api": "openai-completions",
-    "apiKey": "llama.cpp",
-    "models": [{ "id": "Qwen/Qwen3.6-35B-A3B-GGUF:Q8_0", "contextWindow": 262144 }]
-  },
-  "lm-studio": {
-    "baseUrl": "http://localhost:1234/v1",
-    "api": "openai-completions",
-    "apiKey": "lmstudio",
-    "models": [
-      { "id": "google/gemma-4-e4b", "input": ["text", "image"], "contextWindow": 128000 }
-    ]
-  }
-}
-```
-
-Agent model references:
-| Agent | Model Reference |
-|-------|----------------|
-| developer | `llama.cpp/Qwen/Qwen3.6-35B-A3B-GGUF:Q8_0` |
-| tech-lead | `llama.cpp/Qwen/Qwen3.6-35B-A3B-GGUF:Q8_0` |
-| designer | `lm-studio/google/gemma-4-e4b` |
-
-**Mixed local setup (Ollama for coding, lm-studio for vision):**
-| Agent | Provider | Model |
-|-------|----------|-------|
-| developer | ollama | `ollama/qwen3:8b` |
-| tech-lead | ollama | `ollama/qwen3:8b` |
-| designer | lm-studio | `lm-studio/gemma4:e4b` |
-
-**Cloud setup (all cloud):**
-| Agent | Provider | Model |
-|-------|----------|-------|
-| developer | openai | `openai/gpt-4o` |
-| tech-lead | openai | `openai/gpt-4o` |
-| designer | openai | `openai/gpt-4o-vision` |
-
-Every agent's model is configured in its `agents/<name>.md` file using the `<provider>/<model-id>` format. The provider name must match a key in your `models.json` and the model ID must match an entry under that provider.
-
-### Activation
-
-Caravel supports two activation modes — choose based on your workflow.
-
-**Pi Mode (default — no additional setup):**
-1. Ensure agents are symlinked or copied into your Pi agent directory
-2. Verify models are configured in `models.json`
-3. Run `pi --list-models` to validate
-4. Start a session and describe your project — the fleet activates automatically
-
-**ZFS Mode (full terminal workspace):**
-1. Install Zellij (`brew install zellij` / `winget install Zellij.Zellij` / `curl ... zellij ...`)
-2. Start the fleet: `/zellij-start`
-3. Describe your project in the orchestrator pane
-4. Monitor via the floating 10-line status bar (`Ctrl+w` to toggle)
-
-**Agent Discovery:**
-Caravel discovers agents from two sources:
-- **System-wide**: `~/.pi/agent/agents/*.md` (default agents)
-- **Project-local**: `<project>/.pi/agents/*.md` (overrides system agents by name)
-
-This means you can install default agents globally and override specific ones per project.
-
-### Monitoring & Control
-
-Two complementary views for fleet monitoring, plus natural-language control commands.
-
-**Widget Bar (Pi Mode):**
-- Persistent 6-line widget above the editor showing phase progress, agent models, token counts
-- Idle state: shows fleet readiness and last activity
-- Running state: shows per-task detail with agent name, model, and status
-- Toggle: `/fleet`
-
-**Status Bar (ZFS Mode):**
-- Floating 10-line dashboard with agent grid, phase progress, token summary
-- Auto-refreshes every 2 seconds
-- Shows per-agent: name, model, current task, input/output tokens
-- Toggle: `Ctrl+w` in ZFS mode
-
-**Fleet Control Commands:**
-| Command | Action |
-|---------|--------|
-| `pause` / `pause the fleet` | Pause all agents |
-| `resume` / `continue` | Resume paused agents |
-| `skip this phase` / `next phase` | Skip to next phase |
-| `reset` / `start over` | Reset fleet state |
-| `review this phase` | Trigger manual review |
-
 ### Troubleshooting
 
 Common issues and their fixes.
@@ -543,16 +448,6 @@ Caravel includes 5 optional feature extensions, all **disabled by default**. Ena
 Each feature can be toggled independently. Only enabled features are active.
 
 ### 4. Verify It Works
-
-After configuring `models.json`, list available models:
-
-```bash
-pi --list-models
-```
-
-Then in your session, the caravel extension will auto-discover agents from your configured agent directory and use the models you've assigned.
-
-### 3. Verify It Works
 
 After configuring `models.json`, list available models:
 
@@ -786,7 +681,7 @@ caravel/
 ├── ANALYSIS.md           # Generated: codebase analysis report
 ├── PLAN.md               # Generated: project plan with phases/tasks
 ├── zellij-layout.kdl     # ZFS fleet workspace layout (4 variants)
-├── zellij-fleet-config.md# ZFS configuration guide (keybindings, layouts, multi-monitor)
+├── zellij-fleet-config.md  # ZFS configuration guide (keybindings, layouts, multi-monitor)
 ├── examples/             # Example models.json configurations
 │   ├── models-llama-cpp-lm-studio.json
 │   ├── models-ollama.json
@@ -835,7 +730,7 @@ caravel/
 | `extensions/caravel-widget-indicators.ts` | 189 | Widget bar indicators (messaging, health) |
 | `zellij-layout.kdl` | 240 | Fleet workspace layout — default (60/40), minimal, review, wide variants |
 | `zellij-fleet-config.md` | 280 | Configuration guide — installation, keybindings, multi-monitor, troubleshooting |
-| `skills/zellij-fleet.md` | 734 | User documentation — workflows, keyboard shortcuts, layout variants, troubleshooting |
+| `skills/zellij-fleet/SKILL.md` | 734 | User documentation — workflows, keyboard shortcuts, layout variants, troubleshooting |
 
 ## How It Works
 
