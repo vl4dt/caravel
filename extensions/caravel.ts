@@ -32,6 +32,7 @@ import {
   matchesKey,
 } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import { getAgentIdentity } from "./caravel-identity";
 
 // ── Inline: Testability Enforcement Module ──────────────────────────────────────
 
@@ -1596,7 +1597,7 @@ interface FleetTask {
   tokensUsed?: number;
   messageCount?: number;
   startedAt?: number;
-  metadata?: { preFlight?: PreFlightScan; [key: string]: unknown };
+  metadata?: { preFlight?: PreFlightScan; agentIdentity?: string; [key: string]: unknown };
 }
 
 const TASK_OUTPUT_MAX_LINES = 500;
@@ -2440,6 +2441,57 @@ function clearState(cwd: string): void {
   }
 }
 
+// ── Checkpoint data for task recovery ──────────────────────────────────────────
+
+interface CheckpointData {
+  identity: string;   // agent name that owned this checkpoint
+  summary: string;    // task description summary (truncated)
+  taskId: string;
+  phaseName: string;
+  timestamp: number;
+}
+
+/**
+ * Load a checkpoint from the on-disk saved fleet state and return task-specific
+ * recovery data. Returns null if no checkpoint exists.
+ */
+function loadCheckpoint(taskId: string): CheckpointData | null {
+  const filePath = stateFilePath(process.cwd());
+  if (!fs.existsSync(filePath)) return null;
+
+  let raw: string;
+  try {
+    raw = fs.readFileSync(filePath, "utf-8");
+  } catch {
+    return null;
+  }
+
+  let parsed: SerializedFleetState;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+
+  if (!parsed.state?.phases || !Array.isArray(parsed.state.phases)) return null;
+
+  for (const phase of parsed.state.phases) {
+    if (!phase.tasks) continue;
+    const task = phase.tasks.find((t) => t.id === taskId);
+    if (task) {
+      return {
+        identity: task.agentName,
+        summary: truncate(task.description, 100),
+        taskId: task.id,
+        phaseName: phase.name,
+        timestamp: parsed.timestamp || 0,
+      };
+    }
+  }
+
+  return null;
+}
+
 // ============================================================================
 // Widget bar - always exactly 4 lines, left-edge only
 // ============================================================================
@@ -2826,6 +2878,15 @@ async function runPhaseInternal(
     let agentOutputTokens = 0;
     task.startedAt = Date.now();
 
+    // Resolve agent identity on task start
+    try {
+      const identity = getAgentIdentity(task.agentName);
+      if (!task.metadata) task.metadata = {};
+      task.metadata.agentIdentity = identity;
+    } catch {
+      // No-op when identity feature is disabled; do not regress task execution
+    }
+
     task.status = "running";
     fleetState.activeAgents = fleetState.activeAgents.map((a) =>
       a.name === agentDef.name
@@ -2896,6 +2957,12 @@ async function runPhaseInternal(
     let effectiveTaskDesc = task.description;
     const hadPreviousFailure = task.output || task.stderr || task.reviewFeedback;
     if (hadPreviousFailure) {
+      // Load checkpoint to inject recovered context prefix
+      const checkpoint = loadCheckpoint(task.id);
+      const checkpointPrefix = checkpoint
+        ? `[AGENT: ${checkpoint.identity}] [RECOVERED CONTEXT] ${checkpoint.summary}`
+        : null;
+
       const errorContext: string[] = [];
       if (task.stderr) errorContext.push(`Previous stderr: ${task.stderr}`);
       if (task.reviewFeedback) errorContext.push(`Review feedback: ${task.reviewFeedback}`);
@@ -2903,7 +2970,10 @@ async function runPhaseInternal(
       if (task.designReviewFeedback) errorContext.push(`Design review feedback: ${task.designReviewFeedback}`);
       if (task.output) errorContext.push(`Previous output: ${task.output}`);
       if (errorContext.length > 0) {
-        effectiveTaskDesc = `RETRY — Previous attempt failed. Error context:\n${errorContext.join("\n")}\n\nOriginal task:\n${task.description}`;
+        const basePrefix = checkpointPrefix ? `${checkpointPrefix}\n\n` : "";
+        effectiveTaskDesc = `${basePrefix}RETRY — Previous attempt failed. Error context:\n${errorContext.join("\n")}\n\nOriginal task:\n${task.description}`;
+      } else if (checkpointPrefix) {
+        effectiveTaskDesc = `${checkpointPrefix}\n\n${task.description}`;
       }
     }
     const result = await runSubagent(agentDef, effectiveTaskDesc, ctx.cwd, signal, taskProgressId, progressCb);
