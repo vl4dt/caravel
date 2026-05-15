@@ -1,4 +1,4 @@
-# Phase P3: Inter-Agent Messaging - Project Plan
+# Phase P4: Predecessor Context Recovery - Project Plan
 
 > Generated: 2026-05-15 from project planning phase
 > Phases: 1
@@ -8,34 +8,34 @@
 
 ## Phases
 
-### ⏳ Phase 1: Phase P3: Inter-Agent Messaging
+### ⏳ Phase 1: Phase P4: Predecessor Context Recovery
 
 **Status**: pending
 
 #### Tasks
 
-- [○] **T1**: P3T1: Create extensions/caravel-messaging.ts with sendMessage(from, to, subject, body, priority?): Message, getMessages(
+- [○] **T1**: P4T1: Create extensions/caravel-seance.ts with recordTerminatedAgent(agentIdentity, taskId, phase, reason, checkpoint?),
   - **Agent**: developer
   - **Review**: code + design
-- [○] **T2**: P3T1 Review: Verify extensions/caravel-messaging.ts exists with 4 exported functions, .caravel/messages.json created as 
+- [○] **T2**: P4T1 Review: Verify extensions/caravel-seance.ts exists with 4 exported functions, .caravel/seances.json created as vali
   - **Agent**: tech-lead
   - **Review**: code + design
-- [○] **T3**: P3T2: Append DEFAULT_CHANNELS=['general','review','escalation'], getAvailableChannels(): string[], getChannelMessages(ch
+- [○] **T3**: P4T2: Append generateRecoveryContext(seance): string to extensions/caravel-seance.ts. Output ≤500 chars, deterministic. 
   - **Agent**: developer
   - **Review**: code + design
-- [○] **T4**: P3T2 Review: Verify DEFAULT_CHANNELS exported, getAvailableChannels/getChannelMessages correct, agent-specific channels 
+- [○] **T4**: P4T2 Review: Verify generateRecoveryContext exported, output ≤500 chars, includes workSummary/filesModified/toolCallHist
   - **Agent**: tech-lead
   - **Review**: code + design
-- [○] **T5**: P3T3: Append sendNudge(from, to, message): Message, escalate(from, to, subject, body): Message, getUnresolvedNudges(): M
+- [○] **T5**: P4T3: Modify runPhaseInternal in extensions/caravel.ts: on task complete → recordTerminatedAgent(agentIdentity, taskId, 
   - **Agent**: developer
   - **Review**: code + design
-- [○] **T6**: P3T3 Review: Verify 5 nudge/escalation functions exported, nudge priority='high' with 5min expiry, escalation auto-route
+- [○] **T6**: P4T3 Review: Verify caravel.ts compiles, seance recording on task complete/fail, captures workSummary and filesModified,
   - **Agent**: tech-lead
   - **Review**: code + design
-- [○] **T7**: P3T4: Integrate messaging indicators into caravel.ts widget bar. Show unread count [3 unread] and escalation count [1 es
+- [○] **T7**: P4T4: Modify task retry logic in extensions/caravel.ts: on retry → getSeance(taskId). If found, prepend: '[SEANCE RECOVE
   - **Agent**: developer
   - **Review**: code + design
-- [○] **T8**: P3T4 Review: Verify widget bar shows unread count and escalation count when messaging enabled, conditional on messaging 
+- [○] **T8**: P4T4 Review: Verify caravel.ts compiles, retry gets seance prefix when found, format '[SEANCE RECOVERY] {recoveryContext
   - **Agent**: tech-lead
   - **Review**: code + design
 

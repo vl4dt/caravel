@@ -35,12 +35,30 @@ import { Type } from "typebox";
 import { getAgentIdentity } from "./caravel-identity";
 import { buildHealthBar, buildHealthBarFromFleet } from "./caravel-health";
 import { buildMessagingIndicators, formatIndicatorLine, setMessagingCounts as setMessagingCountsInternal } from "./caravel-widget-indicators";
+import { recordTerminatedAgent, getSeanceRecordsForTask, generateRecoveryContext } from "./caravel-seance";
 
 // ============================================================================
 // Messaging feature flag
 // ============================================================================
 
 let messagingEnabled = false;
+
+// ===========================================================================
+// Seance (session) history feature flag
+// ===========================================================================
+
+/** When true, task completion/failure triggers seance recording via recordTerminatedAgent. */
+let historyEnabled = true;
+
+/** Enable or disable session history recording. */
+export function setHistoryEnabled(ctx: ExtensionContext, enabled: boolean): void {
+  historyEnabled = enabled;
+}
+
+/** Check if session history recording is enabled. */
+export function isHistoryEnabled(): boolean {
+  return historyEnabled;
+}
 
 /** Enable or disable the messaging feature (controls widget bar indicators). */
 export function setMessagingEnabled(ctx: ExtensionContext, enabled: boolean): void {
@@ -1630,6 +1648,8 @@ interface FleetTask {
   status: "pending" | "running" | "reviewing" | "complete" | "needs_fix" | "failed";
   output?: string;
   stderr?: string;
+  /** Files the agent modified during this task (if tracked). */
+  filesModified?: string[];
   reviewFeedback?: string;
   reviewCount: number;
   maxReviewCount: number;
@@ -3034,6 +3054,17 @@ async function runPhaseInternal(
     let effectiveTaskDesc = task.description;
     const hadPreviousFailure = task.output || task.stderr || task.reviewFeedback;
     if (hadPreviousFailure) {
+      // ── Seance recovery prefix (prepend up to 2 seance entries, oldest first) ──
+      const seancePrefixes: string[] = [];
+      const seanceRecords = getSeanceRecordsForTask(task.id, 2);
+      for (const record of seanceRecords) {
+        const recoveryContext = generateRecoveryContext(record);
+        seancePrefixes.push(
+          `[SEANCE RECOVERY] ${recoveryContext}\n\n[RETRYING TASK]: ${task.description}`,
+        );
+      }
+      const seancePrefix = seancePrefixes.join("\n\n");
+
       // Load checkpoint to inject recovered context prefix
       const checkpoint = loadCheckpoint(task.id);
       const checkpointPrefix = checkpoint
@@ -3048,9 +3079,9 @@ async function runPhaseInternal(
       if (task.output) errorContext.push(`Previous output: ${task.output}`);
       if (errorContext.length > 0) {
         const basePrefix = checkpointPrefix ? `${checkpointPrefix}\n\n` : "";
-        effectiveTaskDesc = `${basePrefix}RETRY — Previous attempt failed. Error context:\n${errorContext.join("\n")}\n\nOriginal task:\n${task.description}`;
+        effectiveTaskDesc = `${seancePrefix}${basePrefix}RETRY — Previous attempt failed. Error context:\n${errorContext.join("\n")}\n\nOriginal task:\n${task.description}`;
       } else if (checkpointPrefix) {
-        effectiveTaskDesc = `${checkpointPrefix}\n\n${task.description}`;
+        effectiveTaskDesc = `${seancePrefix}${checkpointPrefix}\n\n${task.description}`;
       }
     }
     const result = await runSubagent(agentDef, effectiveTaskDesc, ctx.cwd, signal, taskProgressId, progressCb);
@@ -3076,6 +3107,37 @@ async function runPhaseInternal(
     // Only set recentOutput if not already set by error detection above
     if (!fleetState.recentOutput || fleetState.recentOutput === "") {
       fleetState.recentOutput = result.output || result.stderr || "";
+    }
+
+    // ── Record seance on task completion/failure (when history enabled) ──
+    if (historyEnabled) {
+      const agentIdentity = task.metadata?.agentIdentity ?? task.agentName;
+      const checkpoint = loadCheckpoint(task.id);
+      const checkpointSerializable = checkpoint
+        ? { identity: checkpoint.identity, summary: checkpoint.summary, taskId: checkpoint.taskId, phaseName: checkpoint.phaseName, timestamp: checkpoint.timestamp }
+        : undefined;
+      // Derive workSummary from task output or description
+      const workSummary = task.output && task.output.trim().length > 0
+        ? task.output.slice(0, 1000)
+        : (task.description.slice(0, 200) || "");
+      // filesModified: derive from task output if available
+      const filesModified: string[] | undefined = task.filesModified && task.filesModified.length > 0
+        ? task.filesModified
+        : undefined;
+      const reason = task.status === "complete" ? "task_complete" : "task_failed";
+      try {
+        recordTerminatedAgent(
+          agentIdentity,
+          task.id,
+          phase.name,
+          reason,
+          checkpointSerializable,
+          { workSummary, filesModified },
+          ctx.cwd,
+        );
+      } catch {
+        // Seance recording is non-critical; do not regress task execution
+      }
     }
 
     // Capture stderr and mark buffer as done
