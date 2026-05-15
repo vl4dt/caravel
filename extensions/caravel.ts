@@ -2997,9 +2997,7 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
     // ── Line 3: agent lights ──
     const lights = allAgents.map((a) => {
       const inactive = dim("●");
-      const name = a.name.length > 8 ? a.name.slice(0, 7) + ".." : a.name;
-      const padded = name.padEnd(8);
-      return `${inactive} ${padded}`;
+      return `${inactive} ${a.name}`;
     }).join("  │  ");
     const line3 = `agent lights: ${lights}`;
 
@@ -3089,16 +3087,13 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
       color = "dim";
     }
 
-    const displayName = agentName.length > 8 ? agentName.slice(0, 7) + ".." : agentName;
-    const padded = displayName.padEnd(8);
-
     if (task) {
       const tokens = formatTokens(task.tokensUsed || 0);
       const taskShort = (task.description || "").replace(/^(Phase )?P\d+T\d+:\s*/i, "").slice(0, 18);
       const status = agent.status === "running" ? "run" : agent.status === "reviewing" ? "rev" : "err";
-      return `${light} ${padded}  ${dim(tokens)}  ${theme.fg(color, status)}  ${dim(taskShort)}`;
+      return `${light} ${agentName}  ${dim(tokens)}  ${theme.fg(color, status)}  ${dim(taskShort)}`;
     }
-    return `${light} ${padded}  ${dim("idle")}`;
+    return `${light} ${agentName}  ${dim("idle")}`;
   }).join("  │  ");
 
   const line3 = `agent lights: ${lights}`;
