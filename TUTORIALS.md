@@ -741,7 +741,7 @@ In ZFS mode:
 
 ---
 
-## Tier 5: New Features (P1–P5)
+## Tier 5: New Features (P1–P5){#tier-5-new-features}
 
 ### T13 — Agent Identity & Session Recovery
 
