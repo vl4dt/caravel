@@ -3058,10 +3058,10 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
   }
   for (const agent of fleetState.activeAgents) allAgentsInFleet.add(agent.name);
 
-  const lights = allAgentsInFleet.map((name) => {
-    const agent = fleetState.activeAgents.find((a) => a.name === name);
+  const lights = allAgentsInFleet.map((agentName) => {
+    const agent = fleetState.activeAgents.find((a) => a.name === agentName);
     const isActive = !!agent;
-    const task = fleetState.phases.flatMap(p => p.tasks).find((t) => t.agentName === name);
+    const task = fleetState.phases.flatMap(p => p.tasks).find((t) => t.agentName === agentName);
 
     let light: string;
     let color: string;
@@ -3082,8 +3082,8 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
       color = "dim";
     }
 
-    const name = name.length > 8 ? name.slice(0, 7) + ".." : name;
-    const padded = name.padEnd(8);
+    const displayName = agentName.length > 8 ? agentName.slice(0, 7) + ".." : agentName;
+    const padded = displayName.padEnd(8);
 
     if (task) {
       const tokens = formatTokens(task.tokensUsed || 0);
