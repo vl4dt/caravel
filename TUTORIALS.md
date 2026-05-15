@@ -13,7 +13,8 @@
 - [Tier 2: Review & Quality (Intermediate)](#tier-2-review--quality)
 - [Tier 3: Real Projects (Advanced)](#tier-3-real-projects)
 - [Tier 4: ZFS Mode (Power User)](#tier-4-zfs-mode)
-- [Tier 5: Benchmarks & Customization (Expert)](#tier-5-benchmarks--customization)
+- [Tier 5: New Features (P1–P5)](#tier-5-new-features)
+- [Tier 6: Benchmarks & Customization (Expert)](#tier-6-benchmarks--customization)
 - [Bonus: Exploring Fleet Commands](#bonus-exploring-fleet-commands)
 - [Quick Reference](#quick-reference)
 
@@ -36,11 +37,17 @@ Run through these steps before starting the tutorials:
 # 1. Verify Pi works
 pi --list-models
 
-# 2. Verify Caravel extension is loaded
+# 2. Verify your model provider is running
+# For llama.cpp:
+#   llama.cpp server --model <model-path> --port 9090
+# For Ollama:
+#   ollama serve
+
+# 3. Verify Caravel extension is loaded
 # In Pi chat, type: /fleet
 # You should see the Caravel widget bar
 
-# 3. Verify your models.json has valid entries
+# 4. Verify models.json has valid entries
 # Check that provider names match what agents expect
 ```
 
@@ -126,7 +133,7 @@ Watch the widget bar for a minute — you should see:
 ```
 CARAVEL FLEET  │  P1/5: Setup  │  ▸ RUN
 [████░░░░░░░░░░░░] 20%  │  1/5 tasks
-▸ P1 [RUN] developer → ollama/qwen3
+▸ P1 [RUN] developer → llama.cpp/Qwen3.6
 ▸ P2 [WAIT]
 ▸ P3 [WAIT]
 2 reviews │ Elapsed: 1m 23s
@@ -215,7 +222,7 @@ The agent runs a pre-flight scan and produces `ANALYSIS.md`:
 
 ▸ Agent & Model
   • Agent: auditor
-  • Model: ollama/qwen3:8b
+  • Model: llama.cpp/Qwen3.6-35B
 
 ▸ Execution
   • Input Tokens: 8,200
@@ -647,7 +654,31 @@ In Pi, type:
 You should see Zellij launch with:
 - Left pane: orchestrator (60% width)
 - Right area: agent tabs (developer, tech-lead, designer)
-- Floating status bar: fleet overview
+- Floating status bar: fleet overview with health monitoring
+
+The status bar shows:
+```
+╔═══════════════════════════════════════════════════════╗
+║  CARAVEL FLEET [ZFS MODE] │ P1/3                    ║
+║  ● developer  ◉ tech-lead⚠ ○ designer  │  3 agents  ║
+║  P1: Setup  [████████░░░░░░░░] 40%                    ║
+║  ▸ developer  Implement auth middleware              ║
+║  [developer✓ tech-lead⚠ designer✓]                    ║
+║  ● idle — waiting for work                             ║
+║  ● idle — waiting for work                             ║
+║  ▸ 12.5k / 3.2k  │ fleet: 45k tokens                  ║
+║  Elapsed: 3m 42s  │ ZFS                                ║
+╚═══════════════════════════════════════════════════════╝
+```
+
+Per-agent status icons:
+- `●` = idle
+- `▸` = running
+- `⚠` = stuck (nudge sent)
+- `✗` = zombie (escalation sent)
+- `✓` = healthy agent
+- `⚠` = stuck agent
+- `✗` = zombie agent
 
 #### Step 3: Navigate Panes
 
@@ -710,7 +741,276 @@ In ZFS mode:
 
 ---
 
-## Tier 5: Benchmarks & Customization
+## Tier 5: New Features (P1–P5)
+
+### T13 — Agent Identity & Session Recovery
+
+**Goal:** Understand how Caravel persists agent identity and recovers session state across restarts.
+
+**What you'll learn:**
+- Agent identity resolution (`caravel-identity.ts`)
+- Session checkpoint persistence (`caravel-checkpoints.ts`)
+- How the fleet restores agent identity on restart
+- Periodic checkpointing during long-running phases
+
+#### Step 1: Enable Identity & Checkpoints
+
+Create `.caravel/config.json`:
+```json
+{
+  "identity": true,
+  "health": false,
+  "messaging": false,
+  "seance": false,
+  "thresholds": {
+    "stuck": 120,
+    "zombie": 300,
+    "healthInterval": 30,
+    "checkpointInterval": 60
+  }
+}
+```
+
+#### Step 2: Run a Fleet and Verify Identity Persistence
+
+> "Build a simple calculator CLI"
+
+> "go"
+
+After a phase completes:
+```bash
+# Check agent identity was recorded
+cat .caravel/agents.json
+# Should show: { "developer": { "agentIdentity": "...", "taskId": "...", ... } }
+
+# Check checkpoints
+cat .caravel/checkpoints/T1.json
+# Should show: { taskId: "T1", checkpoint: "...", timestamp: "...", workSummary: "..." }
+```
+
+#### Step 3: Simulate a Session Restart
+
+Pause the fleet:
+> "pause"
+
+Check that state is persisted:
+```bash
+cat .caravel/state.json
+# Should show: phases, currentPhaseIndex, completed tasks
+```
+
+Resume:
+> "resume"
+
+Verify the fleet continues from where it left off.
+
+---
+
+### T14 — Health Monitoring & Stuck Detection
+
+**Goal:** Verify the health monitoring subsystem detects stuck tasks and renders health indicators.
+
+**What you'll learn:**
+- Health monitoring (`caravel-health.ts`) — stuck/zombie detection, nudge/escalation
+- Health bar rendering in ZFS status bar
+- Nudge and escalation messaging
+- Periodic health check intervals
+
+#### Step 1: Enable Health Monitoring
+
+Create `.caravel/config.json`:
+```json
+{
+  "identity": true,
+  "health": true,
+  "messaging": false,
+  "seance": false,
+  "thresholds": {
+    "stuck": 120,
+    "zombie": 300,
+    "healthInterval": 30,
+    "checkpointInterval": 60
+  }
+}
+```
+
+#### Step 2: Run a Fleet and Watch for Health Monitoring
+
+> "Build a service with a slow processing endpoint"
+
+> "go"
+
+Watch the ZFS status bar for health indicators:
+- `✓` = healthy agent
+- `⚠` = stuck agent (nudge sent)
+- `✗` = zombie agent (escalation sent)
+
+Expected health bar output:
+```
+[developer✓ tech-lead⚠ designer✓]
+```
+
+#### Step 3: Verify Health State
+
+```bash
+# Check health state file
+cat .caravel/health.json
+# Should show agent statuses: { agents: { developer: "healthy", ... }, healthBar: "..." }
+
+# Check for nudges/escalations
+cat .caravel/messages.json
+# Should show nudge/escalation entries if tasks were stuck
+```
+
+---
+
+### T15 — Inter-Agent Messaging
+
+**Goal:** Understand inter-agent messaging — channels, nudges, escalations, and widget indicators.
+
+**What you'll learn:**
+- Messaging system (`caravel-messaging.ts`) — channels, nudges, escalations
+- Widget bar messaging indicators
+- Auto-routing of escalations to tech-lead/orchestrator
+- Message persistence in `.caravel/messages.json`
+
+#### Step 1: Enable Messaging
+
+Create `.caravel/config.json`:
+```json
+{
+  "identity": true,
+  "health": true,
+  "messaging": true,
+  "seance": false,
+  "thresholds": {
+    "stuck": 120,
+    "zombie": 300,
+    "healthInterval": 30,
+    "checkpointInterval": 60
+  }
+}
+```
+
+#### Step 2: Run a Fleet with Multiple Agents
+
+> "Build a Kanban board app"
+
+> "go"
+
+Watch the widget bar for messaging indicators:
+- `[3 unread]` = unread messages
+- `[1 escalation]` = open escalations
+
+#### Step 3: Verify Messaging
+
+```bash
+# Check messages
+cat .caravel/messages.json
+# Should show messages across channels: general, review, escalation
+
+# Verify channels
+# DEFAULT_CHANNELS = ['general', 'review', 'escalation']
+# Agent channels are auto-created on first message
+```
+
+---
+
+### T16 — Predecessor Context Recovery (Seance)
+
+**Goal:** Understand the seance (session history) system — recording terminated agents and recovery context.
+
+**What you'll learn:**
+- Seance recording (`caravel-seance.ts`) — terminated agent history
+- Recovery context generation (≤500 chars, deterministic)
+- Seance prefix injection on task retry
+- Predecessor context for improved retry outcomes
+
+#### Step 1: Enable Seance History
+
+Create `.caravel/config.json`:
+```json
+{
+  "identity": true,
+  "health": true,
+  "messaging": true,
+  "seance": true,
+  "thresholds": {
+    "stuck": 120,
+    "zombie": 300,
+    "healthInterval": 30,
+    "checkpointInterval": 60
+  }
+}
+```
+
+#### Step 2: Run a Fleet and Intentionally Cause a Failure
+
+> "Build a complex data processing pipeline"
+
+> "go"
+
+If a task fails (e.g., network error, timeout), the fleet will:
+1. Record the seance: `.caravel/seances.json`
+2. On retry, inject seance context: `[SEANCE RECOVERY] {workSummary}`
+3. Continue with improved context
+
+#### Step 3: Verify Seance Records
+
+```bash
+# Check seance records
+cat .caravel/seances.json
+# Should show: { records: [{ id, agentIdentity, taskId, phase, terminatedAt, reason, workSummary, filesModified, ... }] }
+
+# Verify recovery context is ≤500 chars and deterministic
+```
+
+---
+
+### T17 — Configuration & Initialization
+
+**Goal:** Master Caravel's configuration system — feature flags, thresholds, and fleet initialization.
+
+**What you'll learn:**
+- Config system (`caravel-config.ts`) — DEFAULT_CONFIG, getConfig, updateConfig, initializeConfig
+- Feature flags (identity, health, messaging, seance)
+- Threshold configuration (stuck, zombie, healthInterval, checkpointInterval)
+- Fleet initialization (`caravel-init.ts`) — creates `.caravel/` with all state files
+
+#### Step 1: Initialize Fleet
+
+> "Initialize the fleet"
+
+This runs `initializeFleetConfig()` which creates:
+- `.caravel/` directory
+- `config.json` with DEFAULT_CONFIG
+- `agents.json` (empty)
+- `health.json` (empty)
+- `messages.json` (empty)
+- `seances.json` (empty)
+- `checkpoints/` directory
+
+#### Step 2: Modify Configuration
+
+Update thresholds:
+```json
+{
+  "thresholds": {
+    "stuck": 60,
+    "zombie": 180,
+    "healthInterval": 15,
+    "checkpointInterval": 30
+  }
+}
+```
+
+#### Step 3: Verify All Configs Work
+
+Run a fleet and verify all enabled features work together with custom thresholds.
+
+---
+
+## Tier 6: Benchmarks & Customization
 
 ### T11 — Model Comparison
 
@@ -884,7 +1184,15 @@ Tier 4: ZFS Mode (25 min total)
   T10 → Multi-monitor       ──▶ You optimize your workspace
     │
     ▼
-Tier 5: Benchmarks & Customization (60 min total)
+Tier 5: New Features (P1–P5) (60 min total)
+  T13 → Agent Identity      ──▶ You understand session recovery
+  T14 → Health Monitoring   ──▶ You detect stuck/zombie agents
+  T15 → Inter-Agent Msg     ──▶ You use channels/nudges/escalations
+  T16 → Predecessor Context ──▶ You recover from task failures
+  T17 → Config & Init       ──▶ You manage feature flags
+    │
+    ▼
+Tier 6: Benchmarks & Customization (60 min total)
   T11 → Model benchmarks    ──▶ You can compare models
   T12 → Error diagnosis     ──▶ You can troubleshoot anything
 ```
@@ -904,9 +1212,21 @@ Tier 5: Benchmarks & Customization (60 min total)
 
 ## Related Documentation
 
-- **[README.md](README.md)** — Installation, architecture, configuration
+- **[README.md](README.md)** — Installation, architecture, configuration, features
 - **[SKILL.md](SKILL.md)** — Agent-facing guide (for when agents read docs)
 - **[PROJECT-DESIGN.md](PROJECT-DESIGN.md)** — Architecture decisions
 - **[tests/SCENARIOS.md](tests/SCENARIOS.md)** — Automated test battery (agent-focused)
 - **[tests/README.md](tests/README.md)** — Test battery reference
+- **[tests/test-runner.ts](tests/test-runner.ts)** — Test runner engine with 13 scenarios
 - **[zellij-fleet-config.md](zellij-fleet-config.md)** — ZFS configuration guide
+
+### Feature Extensions
+
+- **[extensions/caravel-identity.ts](extensions/caravel-identity.ts)** — Agent identity resolution & persistence
+- **[extensions/caravel-checkpoints.ts](extensions/caravel-checkpoints.ts)** — Periodic checkpointing & session recovery
+- **[extensions/caravel-health.ts](extensions/caravel-health.ts)** — Health monitoring, stuck/zombie detection, nudges, escalations
+- **[extensions/caravel-messaging.ts](extensions/caravel-messaging.ts)** — Inter-agent messaging (channels, nudges, escalations)
+- **[extensions/caravel-seance.ts](extensions/caravel-seance.ts)** — Predecessor context recovery (session history)
+- **[extensions/caravel-config.ts](extensions/caravel-config.ts)** — Configuration management (feature flags, thresholds)
+- **[extensions/caravel-init.ts](extensions/caravel-init.ts)** — Fleet initialization (creates .caravel/ with all state files)
+- **[extensions/caravel-widget-indicators.ts](extensions/caravel-widget-indicators.ts)** — Widget bar indicators (messaging, health)

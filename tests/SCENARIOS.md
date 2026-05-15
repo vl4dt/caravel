@@ -1030,7 +1030,8 @@ ZFS Mode (terminal multiplexer)
     │  [60%]        │  [20%]      │      │
     ├─────────────────────────────────────┤
     │  status bar (floating, 10 lines)   │
-    │  agent grid  │  phase  │  tokens   │
+    │  agent grid  │  health  │ tokens   │
+    │  [dev✓ tech⚠ des✓]                 │
     └─────────────────────────────────────┘
 ```
 
@@ -1087,6 +1088,217 @@ Layout: review
 
 ---
 
+<a id="tier-3-health"></a>
+## S11 — Health Monitoring & Stuck Detection
+
+**Purpose**: Verify the health monitoring subsystem — stuck task detection, zombie detection, nudge system, and health bar rendering.
+
+**Complexity**: ★★★☆☆ (Intermediate)
+**Config**: Enable via `.caravel/config.json` → `{ health: true }`
+
+```
+Health Monitoring Flow:
+──────────────────────
+Phase Start
+     │
+     ├─▶ startPeriodicHealthChecks(interval=30s)
+     │
+     ├─▶ Per Task:
+     │    ├─▶ Check: isStuck() → 120s threshold
+     │    ├─▶ Check: isZombie() → 300s threshold
+     │    ├─▶ Nudge if stuck: sendNudge(agent, taskId)
+     │    └─▶ Escalate if zombie: escalate(agent, taskId)
+     │
+     ├─▶ Health Bar (ZFS):
+     │   [developer✓ tech-lead⚠ designer✗]
+     │
+     └─▶ Phase End: stopHealthChecks()
+```
+
+#### Project: Build a Small Service (with health monitoring)
+
+```javascript
+plan_project({
+  name: "Health Monitor Test Service",
+  phases: [
+    {
+      name: "Setup with Health Enabled",
+      tasks: [
+        {
+          agent: "developer",
+          task: "Create a simple Node.js HTTP service with: health endpoint (/health), basic API endpoint (/api/echo that echoes back input), and a task that intentionally takes 5+ minutes to implement (complex data processing pipeline). Enable health monitoring via .caravel/config.json: { health: true, thresholds: { stuck: 120, zombie: 300, healthInterval: 30 } }.",
+          acceptance_criteria: "Health endpoint works, API endpoint works, config.json created with health enabled, thresholds configured",
+          testability: "curl localhost:3000/health → 200. curl localhost:3000/api/echo -d '{hello}' → echo back. Verify .caravel/config.json has health: true"
+        }
+      ]
+    },
+    {
+      name: "Health Bar Verification",
+      tasks: [
+        {
+          agent: "developer",
+          task: "Verify health monitoring is active: check that .caravel/health.json exists during phase execution, verify health bar renders in ZFS status bar with per-agent status icons (✓/⚠/✗), verify nudge system creates entries in .caravel/messages.json when tasks exceed stuck threshold.",
+          acceptance_criteria: "health.json exists, health bar shows [agent✓ agent⚠ agent✗] format, nudge entries exist when tasks are stuck",
+          testability: "cat .caravel/health.json → verify valid JSON with agent statuses. Check .caravel/messages.json → verify nudge entries"
+        }
+      ]
+    }
+  ]
+})
+
+fleet_control(action = "go")
+```
+
+#### Expected Health Bar Output
+
+```
+╔═══════════════════════════════════════════════════════╗
+║  CARAVEL FLEET [ZFS MODE] │ P1/2                    ║
+║  ● developer  ◉ tech-lead⚠ ○ designer  │  3 agents  ║
+║  P1: Setup  [████████░░░░░░░░] 40%                    ║
+║  ▸ developer  Implement data processing pipeline      ║
+║  ▸ tech-lead  stuck — nudge sent                       ║
+║  [developer✓ tech-lead⚠ designer✓]                    ║
+║  ● idle — waiting for work                             ║
+║  ● idle — waiting for work                             ║
+║  ▸ 12.5k / 3.2k  │ fleet: 45k tokens                  ║
+║  Elapsed: 3m 42s  │ ZFS                                ║
+╚═══════════════════════════════════════════════════════╝
+```
+
+---
+
+<a id="tier-3-messaging"></a>
+## S12 — Inter-Agent Messaging
+
+**Purpose**: Verify inter-agent messaging — channels, nudge system, escalation, and messaging indicators in the widget bar.
+
+**Complexity**: ★★★☆☆ (Intermediate)
+**Config**: Enable via `.caravel/config.json` → `{ messaging: true }`
+
+```
+Messaging Flow:
+─────────────
+Agent A → sendNudge(agentB, taskId, "Need review")
+     │
+     ├─▶ .caravel/messages.json updated
+     ├─▶ Channel: 'general' (default)
+     ├─▶ Priority: 'high'
+     ├─▶ Expiry: 5min (NUDGE_EXPIRY_MS)
+     │
+     ├─▶ On escalation:
+     │    ├─▶ escalate(agent, taskId, "Urgent")
+     │    ├─▶ Auto-routes to ['tech-lead', 'orchestrator']
+     │    └─▶ Priority: 'escalation'
+     │
+     └─▶ Widget bar shows:
+         [3 unread][1 escalation]
+```
+
+#### Project: Multi-Agent Coordination Test
+
+```javascript
+plan_project({
+  name: "Messaging Coordination Test",
+  phases: [
+    {
+      name: "Setup with Messaging",
+      tasks: [
+        {
+          agent: "developer",
+          task: "Create a project that exercises all messaging channels: 1) Create messages in 'general' channel, 2) Create messages in 'review' channel with review feedback, 3) Create an escalation in 'escalation' channel, 4) Send nudges between agents, 5) Verify messaging indicators appear in the widget bar [3 unread][1 escalation]. Enable messaging via .caravel/config.json: { messaging: true }.",
+          acceptance_criteria: "All 3 DEFAULT_CHANNELS exist (general, review, escalation), messages persisted to .caravel/messages.json, nudges with 5min expiry, escalations auto-routed, widget bar shows indicators",
+          testability: "cat .caravel/messages.json → verify all messages. Verify widget bar shows unread/escalation counts. Send nudge → verify .caravel/messages.json updated"
+        }
+      ]
+    },
+    {
+      name: "Messaging Lifecycle",
+      tasks: [
+        {
+          agent: "tech-lead",
+          task: "Verify messaging lifecycle: 1) Get available channels → should return ['general', 'review', 'escalation'], 2) Create agent-specific channel by sending message, 3) Mark messages as read, 4) Verify getMessagesByChannel filters correctly, 5) Verify getUnresolvedNudges returns only unread nudges, 6) Resolve escalation and verify getOpenEscalations returns empty.",
+          acceptance_criteria: "All channels listed, agent channels auto-created on message, markAsRead works, escalation resolution works, filters accurate",
+          testability: "Verify each API: getAvailableChannels → ['general','review','escalation']. Create channel → verify .caravel/messages.json updated. Resolve → verify getOpenEscalations returns []"
+        }
+      ]
+    }
+  ]
+})
+
+fleet_control(action = "go")
+```
+
+---
+
+<a id="tier-3-seance"></a>
+## S13 — Predecessor Context Recovery (Seance)
+
+**Purpose**: Verify the seance (session history) system — recording terminated agents, recovery context generation, and seance prefix injection on task retry.
+
+**Complexity**: ★★★★☆ (Advanced)
+**Config**: Enable via `.caravel/config.json` → `{ seance: true }`
+
+```
+Seance Recovery Flow:
+───────────────────
+Task Fails
+     │
+     ├─▶ recordTerminatedAgent(agent, taskId, phase, 'task_failed')
+     │    ├─▶ .caravel/seances.json updated
+     │    ├─▶ Captures: lastCheckpoint, workSummary, filesModified
+     │    └─▶ SeanceRecord: { id, agentIdentity, taskId, phase, terminatedAt, reason, lastCheckpoint, workSummary, filesModified, toolCallHistory, contextWindow }
+     │
+     ├─▶ On Retry:
+     │    ├─▶ getSeanceRecordsForTask(taskId, 2) → max 2 entries
+     │    ├─▶ For each record:
+     │    │    ├─▶ generateRecoveryContext(seance) → ≤500 chars
+     │    │    └─▶ Format: '[SEANCE RECOVERY] {recoveryContext}'
+     │    └─▶ Inject prefix into effective task description:
+     │        [SEANCE RECOVERY] {workSummary}
+     │        [AGENT] {agentIdentity}
+     │        [RECOVERED CONTEXT] {filesModified, toolCallHistory}
+     │
+     └─▶ On Task Complete:
+         └─▶ recordTerminatedAgent(agent, taskId, phase, 'task_complete')
+```
+
+#### Project: Test Seance Recovery with Intentional Failure
+
+```javascript
+plan_project({
+  name: "Seance Recovery Test",
+  phases: [
+    {
+      name: "Setup with Seance History",
+      tasks: [
+        {
+          agent: "developer",
+          task: "Create a TypeScript utility library with: 1) A string manipulation module (reverse, truncate, slugify), 2) A date formatting module (format, parse, diff), 3) A validation module (isEmail, isURL, isEmpty). Configure .caravel/config.json with seance: true. The implementation should be complex enough to produce meaningful work summaries and file modification history.",
+          acceptance_criteria: "3 modules with 9+ functions total, TypeScript compiles, config.json has seance: true",
+          testability: "import each module → verify all functions work. Check .caravel/seances.json → verify seance records created"
+        }
+      ]
+    },
+    {
+      name: "Seance Verification",
+      tasks: [
+        {
+          agent: "auditor",
+          task: "Verify seance system: 1) Read .caravel/seances.json → verify valid JSON with seance records, 2) Check each record has required fields (id, agentIdentity, taskId, phase, terminatedAt, reason, workSummary, filesModified), 3) Verify generateRecoveryContext output is ≤500 chars and deterministic (same input → same output), 4) Verify getSeanceHistory returns records filtered by agent identity, 5) Verify getSeance(taskId) returns the correct seance record, 6) Verify clearSeance(taskId) removes the record, 7) Verify clearAllSeances clears all records.",
+          acceptance_criteria: "seances.json valid, all required fields present, recovery context ≤500 chars and deterministic, CRUD operations work correctly",
+          testability: "cat .caravel/seances.json → verify structure. Run test suite → all pass. Verify deterministic: generateRecoveryContext(seance1) === generateRecoveryContext(seance1)"
+        }
+      ]
+    }
+  ]
+})
+
+fleet_control(action = "go")
+```
+
+---
+
 ## Benchmark Suite
 
 ### Quick Benchmark Commands
@@ -1139,33 +1351,31 @@ console.log(`Cost: $${cost.toFixed(2)} for ${hours.toFixed(2)} hours of work`);
 ## Agent Quick Reference
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  CARAVEL AGENTS                                             │
-├──────────┬───────────┬───────────────┬─────────────────────┤
-│ Agent    │ Model     │ Tools         │ When to Use         │
-├──────────┼───────────┼───────────────┼─────────────────────┤
-│ developer│ qwen3:32k │ read,write,   │ Implement features, │
-│          │           │ edit, grep,   │ fix bugs, write     │
-│          │           │ bash, exec    │ tests/builds        │
-├──────────┼───────────┼───────────────┼─────────────────────┤
-│ tech-lead│ qwen3:32k │ read,write,   │ Architecture, code  │
-│          │           │ edit, grep,   │ review, planning,   │
-│          │           │ bash          │ logic error detect. │
-├──────────┼───────────┼───────────────┼─────────────────────┤
-│ designer │ glm4.7fl │ read,write,   │ UI review, visual   │
-│          │ ash:32k  │ edit, grep    │ design, accessibility│
-├──────────┼───────────┼───────────────┼─────────────────────┤
-│ documenter│qwen3:32k │ read,write,   │ Documentation:      │
-│          │           │ edit, grep    │ README, API docs,   │
-│          │           │               │ architecture docs   │
-├──────────┼───────────┼───────────────┼─────────────────────┤
-│ planner  │ qwen3:32k │ read,write,   │ Requirement gathering,│
-│          │           │ grep          │ project planning    │
-├──────────┼───────────┼───────────────┼─────────────────────┤
-│ auditor  │ qwen3:32k │ read,write,   │ Documentation audit,│
-│          │           │ grep          │ code audit, quality │
-│          │           │               │ gate checks         │
-└──────────┴───────────┴───────────────┴─────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  CARAVEL AGENTS                                                      │
+├──────────┬──────────────────────────────────┬────────────────────────┬──────────────────────────────┤
+│ Agent    │ Model Reference                  │ Tools                  │ When to Use                  │
+├──────────┼──────────────────────────────────┼────────────────────────┼──────────────────────────────┤
+│ developer│ llama.cpp/Qwen/Qwen3.6-35B-A3B  │ read,write,edit,bash,  │ Implement features, fix      │
+│          │ :GGUF:Q4_K_M                     │ grep,find,ls,searxng_  │ bugs, write tests/builds     │
+├──────────┼──────────────────────────────────┼────────────────────────┼──────────────────────────────┤
+│ tech-lead│ llama.cpp/Qwen/Qwen3.6-35B-A3B  │ read,write,edit,bash,  │ Architecture, code review,   │
+│          │ :GGUF:Q4_K_M                     │ grep,find,ls           │ planning, logic error detect.│
+├──────────┼──────────────────────────────────┼────────────────────────┼──────────────────────────────┤
+│ designer │ llama.cpp/Qwen/Qwen3.6-35B-A3B  │ read,bash,grep,find,   │ UI review, visual design,    │
+│          │ :GGUF:Q4_K_M                     │ ls,searxng_search      │ accessibility (vision)       │
+├──────────┼──────────────────────────────────┼────────────────────────┼──────────────────────────────┤
+│ documenter│llama.cpp/Qwen/Qwen3.6-35B-A3B  │ read,write,edit,grep   │ Documentation: README, API   │
+│          │ :GGUF:Q4_K_M                     │                        │ docs, architecture docs      │
+├──────────┼──────────────────────────────────┼────────────────────────┼──────────────────────────────┤
+│ planner  │ llama.cpp/Qwen/Qwen3.6-35B-A3B  │ read,write,grep        │ Requirement gathering,       │
+│          │ :GGUF:Q4_K_M                     │                        │ project planning             │
+├──────────┼──────────────────────────────────┼────────────────────────┼──────────────────────────────┤
+│ auditor  │ llama.cpp/Qwen/Qwen3.6-35B-A3B  │ read,write,grep,bash   │ Documentation audit, code    │
+│          │ :GGUF:Q4_K_M                     │                        │ audit, quality gate checks   │
+└──────────┴──────────────────────────────────┴────────────────────────┴──────────────────────────────┘
+
+**Note:** All agents use `llama.cpp/Qwen/Qwen3.6-35B-A3B-GGUF:Q4_K_M` — matches the main agent model, supports vision (text+image), and eliminates network/config overhead. For multi-model comparison, override individual agents in their `agents/*.md` files.
 ```
 
 ---
@@ -1173,29 +1383,36 @@ console.log(`Cost: $${cost.toFixed(2)} for ${hours.toFixed(2)} hours of work`);
 ## Feature Coverage Matrix
 
 ```
-Feature                  │ S1 │ S2 │ S3 │ S4 │ S5 │ S6 │ S7 │ S8 │ S9 │ S10
-─────────────────────────┼────┼────┼────┼────┼────┼────┼────┼────┼────┼────
-Basic Fleet              │ ███│ ███│ ███│ ███│ ███│ ███│ ███│ ███│ ███│ ███
-Two-Stage Review         │ ███│ ███│ ███│ ███│ ███│ ███│ ███│ ███│ ███│ ███
-Code Review (Logic)      │    │    │ ███│ ███│ ███│ ███│ ███│ ███│ ███│
-Design Review            │    │ ███│ ███│    │ ███│ ███│ ███│ ███│ ███│
-Metrics Collection       │    │    │    │    │ ███│ ███│ ███│ ███│ ███│
-Telegram Integration     │    │    │    │    │    │ ███│ ███│ ███│ ███│
-Linear Integration       │    │    │    │    │    │ ███│ ███│ ███│ ███│
-Plane Integration        │    │    │    │    │    │ ███│ ███│ ███│ ███│
-Documenter Agent         │    │    │    │ ███│ ███│ ███│ ███│ ███│ ███│
-Planner Agent            │ ███│ ███│ ███│ ███│ ███│ ███│ ███│ ███│ ███│ ███│
-Auditor Agent            │    │    │ ███│ ███│ ███│ ███│ ███│ ███│ ███│
-State Serialization      │    │    │    │    │    │    │    │ ███│ ███│ ███
-Pause/Resume             │    │    │    │    │    │    │    │ ███│ ███│ ███
-Background Mode          │    │    │    │    │    │    │    │ ███│ ███│ ███
-ZFS Migration            │    │    │    │    │    │    │    │ ███│ ███│ ███
-Cross-Model Benchmark    │    │    │    │    │    │    │    │ ███│ ███│
-Testability Enforcement  │ ███│ ███│ ███│ ███│ ███│ ███│ ███│ ███│ ███│ ███
-Gate Checks              │ ███│ ███│ ███│ ███│ ███│ ███│ ███│ ███│ ███│ ███
-Logic Error Detection    │    │    │ ███│ ███│ ███│ ███│ ███│ ███│ ███│ ███
-Design Token Checks      │    │ ███│    │    │ ███│ ███│ ███│ ███│ ███│
-Responsive Verification  │    │ ███│    │    │ ███│ ███│ ███│ ███│ ███│
+Feature                    │ S1 │ S2 │ S3 │ S4 │ S5 │ S6 │ S7 │ S8 │ S9 │ S10 │ S11 │ S12 │ S13
+───────────────────────────┼────┼────┼────┼────┼────┼────┼────┼────┼────┼─────┼─────┼─────┼─────
+Basic Fleet                │ ███│ ███│ ███│ ███│ ███│ ███│ ███│ ███│ ███│ ███ │ ███ │ ███ │ ███
+Two-Stage Review           │ ███│ ███│ ███│ ███│ ███│ ███│ ███│ ███│ ███│ ███ │ ███ │ ███ │ ███
+Code Review (Logic)        │    │    │ ███│ ███│ ███│ ███│ ███│ ███│ ███│     │     │     │ ███
+Design Review              │    │ ███│ ███│    │ ███│ ███│ ███│ ███│ ███│ ███ │ ███ │ ███ │ ███
+Metrics Collection         │    │    │    │    │ ███│ ███│ ███│ ███│ ███│ ███ │ ███ │ ███ │ ███
+Telegram Integration       │    │    │    │    │    │ ███│ ███│ ███│ ███│ ███ │ ███ │ ███ │ ███
+Linear Integration         │    │    │    │    │    │ ███│ ███│ ███│ ███│ ███ │ ███ │ ███ │ ███
+Plane Integration          │    │    │    │    │    │ ███│ ███│ ███│ ███│ ███ │ ███ │ ███ │ ███
+Documenter Agent           │    │    │    │ ███│ ███│ ███│ ███│ ███│ ███│ ███ │ ███ │ ███ │ ███
+Planner Agent              │ ███│ ███│ ███│ ███│ ███│ ███│ ███│ ███│ ███│ ███ │ ███ │ ███ │ ███
+Auditor Agent              │    │    │ ███│ ███│ ███│ ███│ ███│ ███│ ███│ ███ │ ███ │ ███ │ ███
+State Serialization        │    │    │    │    │    │    │    │ ███│ ███│ ███ │ ███ │ ███ │ ███
+Pause/Resume               │    │    │    │    │    │    │    │ ███│ ███│ ███ │ ███ │ ███ │ ███
+Background Mode            │    │    │    │    │    │    │    │ ███│ ███│ ███ │ ███ │ ███ │ ███
+ZFS Migration              │    │    │    │    │    │    │    │ ███│ ███│ ███ │ ███ │ ███ │ ███
+Cross-Model Benchmark      │    │    │    │    │    │    │    │ ███│ ███│ ███ │ ███ │ ███ │ ███
+Testability Enforcement    │ ███│ ███│ ███│ ███│ ███│ ███│ ███│ ███│ ███│ ███ │ ███ │ ███ │ ███
+Gate Checks                │ ███│ ███│ ███│ ███│ ███│ ███│ ███│ ███│ ███│ ███ │ ███ │ ███ │ ███
+Logic Error Detection      │    │    │ ███│ ███│ ███│ ███│ ███│ ███│ ███│ ███ │ ███ │ ███ │ ███
+Design Token Checks        │    │ ███│    │    │ ███│ ███│ ███│ ███│ ███│ ███ │ ███ │ ███ │ ███
+Responsive Verification    │    │ ███│    │    │ ███│ ███│ ███│ ███│ ███│ ███ │ ███ │ ███ │ ███
+Agent Identity & Recovery  │    │    │    │    │    │    │    │     │     │ ███ │ ███ │ ███ │ ███
+Health Monitoring          │    │    │    │    │    │    │    │     │     │ ███ │ ███ │ ███ │ ███
+Inter-Agent Messaging      │    │    │    │    │    │    │    │     │     │ ███ │ ███ │ ███ │ ███
+Predecessor Context (Seance)│   │    │    │    │    │    │    │     │     │ ███ │ ███ │ ███ │ ███
+Config & Initialization    │    │    │    │    │    │    │    │     │     │ ███ │ ███ │ ███ │ ███
+Health Bar (ZFS)           │    │    │    │    │    │    │    │     │     │     │ ███ │ ███ │ ███
+Messaging Indicators       │    │    │    │    │    │    │    │     │     │     │ ███ │ ███ │ ███
 ```
 
 ---
@@ -1325,18 +1542,19 @@ To test with different models:
 
 Example:
 ```markdown
-# Before (Model A)
-model: docker-models/docker.io/ai/qwen3-coder:32k
+# Before (Model A — default)
+model: llama.cpp/Qwen/Qwen3.6-35B-A3B-GGUF:Q4_K_M
 
-# After (Model B)  
-model: docker-models/docker.io/ai/glm-4.7-flash:32k
+# After (Model B — for comparison)
+model: ollama/qwen3:8b
+// or: openai/gpt-4o, lm-studio/gemma-4-e4b, etc.
 ```
 
 ### Common Issues & Solutions
 
 | Issue | Solution |
 |-------|----------|
-| Docker models not found | Check `docker ps` — ensure model containers are running |
+| Model not available | Check `pi --list-models` — verify provider is running (llama.cpp, Ollama, etc.) |
 | Import errors in caravel.ts | Ensure caravel.ts is deployed to `~/.pi/agent/extensions/caravel.ts` |
 | Command conflicts | Use `/caravel-pause` not `/pause`, `/caravel-go` not `/go` |
 | Missing integrations | Configure `integrations/telegram.ts` or `integrations/linear.ts` with real credentials |
