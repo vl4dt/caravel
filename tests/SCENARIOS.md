@@ -482,7 +482,7 @@ fleet_control(action = "go")
 
 ---
 
-<a id="tier-2-fullstack"></a>
+<a id="tier-2-intermediate"></a>
 ## Tier 2: Intermediate Tests
 
 ### S5 — Full-Stack Application (All Features)
