@@ -785,6 +785,116 @@ export function buildFleetSnapshot(opts: {
 }
 
 // ===========================================================================
+// INLINE: ZFS Status Bar Manager (from zfs_status_bar.ts)
+// ===========================================================================
+
+interface ZFSStatusBarManagerOptions {
+  floatingPaneName: string;
+  sessionName: string;
+  cwd: string;
+  getFleetState: () => StatusBarFleetSnapshot | null;
+  getPlatformInfo: () => PlatformInfo;
+}
+
+class ZFSStatusBarManager {
+  private floatingPaneName: string;
+  private sessionName: string;
+  private cwd: string;
+  private getFleetState: () => StatusBarFleetSnapshot | null;
+  private getPlatformInfo: () => PlatformInfo;
+  private intervalId: ReturnType<typeof setInterval> | null = null;
+  private paneId: string | null = null;
+
+  constructor(opts: ZFSStatusBarManagerOptions) {
+    this.floatingPaneName = opts.floatingPaneName;
+    this.sessionName = opts.sessionName;
+    this.cwd = opts.cwd;
+    this.getFleetState = opts.getFleetState;
+    this.getPlatformInfo = opts.getPlatformInfo;
+    this.paneId = null;
+  }
+
+  private async createFloatingPane(): Promise<void> {
+    const result = await new Promise<{ success: boolean; paneId?: string }>((resolve) => {
+      const proc = spawn("zellij", [
+        "action", "new-pane",
+        "-s", this.sessionName,
+        "-n", this.floatingPaneName,
+        "-f",
+        "--height", "8",
+        "--pinned",
+        "--",
+        "cat",
+      ], { shell: true, stdio: ["ignore", "pipe", "pipe"] });
+      let stdout = "";
+      proc.stdout.on("data", (d: any) => { stdout += d.toString(); });
+      proc.on("close", (code: number) => {
+        const paneId = stdout.trim().match(/^(terminal_\d+)$/m)?.[1] || null;
+        resolve({ success: code === 0 || code === null, paneId });
+      });
+      setTimeout(() => { resolve({ success: false, paneId: null }); }, 5000);
+    });
+    if (result.success && result.paneId) {
+      this.paneId = result.paneId;
+    }
+  }
+
+  private async updatePane(content: string): Promise<void> {
+    if (!this.paneId) return;
+    await this.sendZellijActionRaw("clear", ["-s", this.sessionName]);
+    const lines = content.split("\n");
+    for (const line of lines) {
+      await this.sendZellijActionRaw("write-chars", [
+        "-s", this.sessionName,
+        "-n", this.paneId,
+        line,
+      ]);
+      await this.sendZellijActionRaw("send-keys", [
+        "-s", this.sessionName,
+        "-n", this.paneId,
+        "Enter",
+      ]);
+    }
+  }
+
+  private sendZellijActionRaw(action: string, extraArgs: string[] = []): Promise<boolean> {
+    return new Promise<boolean>((resolve) => {
+      const proc = spawn("zellij", [action, ...extraArgs], { shell: true, stdio: ["ignore", "pipe", "pipe"] });
+      proc.on("close", (code: number) => { resolve(code === 0 || code === null); });
+      proc.on("error", () => { resolve(false); });
+      setTimeout(() => { resolve(false); }, 5000);
+    });
+  }
+
+  async start(): Promise<void> {
+    if (this.intervalId) return;
+    await this.createFloatingPane();
+    this.tick();
+    this.intervalId = setInterval(() => this.tick(), 2000);
+  }
+
+  private async tick(): Promise<void> {
+    const fleetState = this.getFleetState();
+    if (!fleetState) return;
+    const platform = this.getPlatformInfo();
+    const snap = buildFleetSnapshot(fleetState);
+    const content = renderStatusBar(snap);
+    await this.updatePane(content);
+  }
+
+  stop(): void {
+    if (this.intervalId) {
+      clearInterval(this.intervalId);
+      this.intervalId = null;
+    }
+  }
+
+  update(): void {
+    // If interval is running, tick handles updates automatically
+  }
+}
+
+// ===========================================================================
 // INLINE: ZFS Process Manager (from zellij-fleet.ts)
 // ===========================================================================
 
@@ -930,33 +1040,37 @@ function generateFleetLayout(agents: Array<{ name: string; description: string }
   lines.push("// Caravel Fleet - Auto-generated Zellij Layout");
   lines.push("// ════════════════════════════════════════════════════════════");
   lines.push("");
-  lines.push("window {");
+  lines.push("layout {");
+  lines.push('    name: "fleet"');
   lines.push("");
-  lines.push("    pane {");
-  lines.push("        type: \"main\"");
-  lines.push(`        align: "left"`);
-  lines.push(`        size: ${leftWidth}`);
-  lines.push(`        name: "orchestrator"`);
-  lines.push("        focus: true");
-  lines.push("    }");
+  lines.push("    window {");
+  lines.push("");
+  lines.push("        pane {");
+  lines.push("            type: \"main\"");
+  lines.push(`            align: "left"`);
+  lines.push(`            size: ${leftWidth}`);
+  lines.push(`            name: "orchestrator"`);
+  lines.push("            focus: true");
+  lines.push("        }");
   lines.push("");
   const agentPanes = agents.slice(0, 5);
   for (const agent of agentPanes) {
-    lines.push("    pane {");
-    lines.push("        align: \"right\"");
-    lines.push(`        size: ${rightWidth}`);
-    lines.push(`        name: "${agent.name}"`);
-    lines.push("    }");
+    lines.push("        pane {");
+    lines.push(`            align: "right"`);
+    lines.push(`            size: ${rightWidth}`);
+    lines.push(`            name: "${agent.name}"`);
+    lines.push("        }");
     lines.push("");
   }
-  lines.push("    floating {");
-  lines.push("        name: \"status-bar\"");
-  lines.push('        y: "bottom"');
-  lines.push('        x: "right"');
-  lines.push("        max_width: 80");
-  lines.push("        height: 10");
-  lines.push("    }");
+  lines.push("        floating {");
+  lines.push("            name: \"status-bar\"");
+  lines.push('            y: "bottom"');
+  lines.push('            x: "right"');
+  lines.push("            max_width: 80");
+  lines.push("            height: 10");
+  lines.push("        }");
   lines.push("");
+  lines.push("    }");
   lines.push("}");
   return lines.join("\n");
 }
@@ -1103,6 +1217,79 @@ class ZFS {
     });
   }
 
+  // Switch the current session to the fleet layout (used when inside an existing Zellij session)
+  async switchToFleetLayout(cwd?: string): Promise<{ success: boolean; message: string }> {
+    if (!this.zellijAvailable) return { success: false, message: "Zellij is not installed." };
+    // Ensure the layout file exists
+    const layoutPath = this.layoutPath || path.join(cwd ?? this.cwd, FLEET_LAYOUT_FILE);
+    if (!fs.existsSync(layoutPath)) {
+      return { success: false, message: `Layout file not found at ${layoutPath}. Run /zellij-start from outside Zellij first.` };
+    }
+    return new Promise((resolve) => {
+      const proc = spawn("zellij", ["action", "switch-layout", "fleet"], { shell: true, stdio: "ignore" });
+      proc.on("close", (code: number) => {
+        if (code === 0 || code === null) {
+          resolve({ success: true, message: `Switched to fleet layout.` });
+        } else {
+          resolve({ success: false, message: `zellij switch-layout exited with code ${code}. The "fleet" layout name may not match a defined layout in your zellij-layout.kdl.` });
+        }
+      });
+      proc.on("error", () => resolve({ success: false, message: "Failed to execute zellij switch-layout." }));
+      setTimeout(() => resolve({ success: false, message: "zellij switch-layout timed out." }), 5000);
+    });
+  }
+
+  async listSessions(): Promise<Array<{ name: string; layout: string; windows: number; panes: number }>> {
+    if (!this.zellijAvailable) return [];
+    return new Promise<Array<{ name: string; layout: string; windows: number; panes: number }>>((resolve) => {
+      const proc = spawn("zellij", ["list-sessions"], { shell: true, stdio: ["ignore", "pipe", "pipe"] });
+      let stdout = "", stderr = "";
+      proc.stdout.on("data", (d: any) => { stdout += d.toString(); });
+      proc.stderr.on("data", (d: any) => { stderr += d.toString(); });
+      proc.on("close", (code: number) => {
+        if (code !== 0 && code !== null) {
+          resolve([]);
+          return;
+        }
+        const sessions: Array<{ name: string; layout: string; windows: number; panes: number }> = [];
+        const lines = stdout.trim().split("\n");
+        for (const line of lines) {
+          const parts = line.split(/\s+/);
+          if (parts.length >= 2) {
+            sessions.push({
+              name: parts[0],
+              layout: parts[1] || "unknown",
+              windows: 0,
+              panes: 0,
+            });
+          }
+        }
+        resolve(sessions);
+      });
+      proc.on("error", () => resolve([]));
+      setTimeout(() => resolve([]), 3000);
+    });
+  }
+
+  async discoverSession(): Promise<{ exists: boolean; running: boolean }> {
+    const sessions = await this.listSessions();
+    const found = sessions.find((s) => s.name === this.sessionName);
+    return { exists: !!found, running: !!found };
+  }
+
+  async detectInsideZellij(): Promise<boolean> {
+    // Check if we are running inside an active Zellij session.
+    // Zellij sets the ZELLIJSOCKET (or ZELLIJ_SOCKET_PATH) environment variable
+    // when spawned inside a session. This is the most reliable indicator.
+    if (process.env["ZELLIJSOCKET"] || process.env["ZELLIJ_SOCKET_PATH"]) {
+      return true;
+    }
+    // Fallback: if zellij list-sessions returns anything, we're likely inside one.
+    // This is a heuristic — there could be unrelated sessions running.
+    const sessions = await this.listSessions();
+    return sessions.length > 0;
+  }
+
   async detachSession(): Promise<boolean> {
     if (!this.zellijAvailable) return false;
     return new Promise<boolean>((resolve) => {
@@ -1229,6 +1416,8 @@ class ZFS {
       getPlatformInfo: () => ({ shell: this.platform.shell, isWindows: this.platform.isWindows, platform: this.platform.platform }),
     });
     this.statusBarActive = true;
+    // Start the status bar manager (fire-and-forget; callers don't await)
+    this.statusBarManager.start().catch(() => {});
   }
 
   destroyStatusBar(): void {
@@ -6166,23 +6355,36 @@ Status: idle | ${formatDuration(Date.now() - fleetState.startTime)} elapsed`,
         };
       }
 
-      // Check if session already exists
-      const state = zfs.getFleetState();
-      if (state.activePanes > 0 || state.activeProcesses > 0) {
+      // Discover if fleet session already exists in zellij
+      const discovery = await zfs.discoverSession();
+      if (discovery.exists) {
+        // Session already exists — switch to it
+        const switched = await zfs.switchToSession();
+        if (switched) {
+          return {
+            content: [{
+              type: "text",
+              text:
+                `🔗 Switched to existing ZFS session "${FLEET_SESSION}".\n\n` +
+                `The fleet session is already running.\n` +
+                `Use /zellij-panes to list panes, /zellij-status for overview.`,
+            }],
+          };
+        }
         return {
           content: [{
             type: "text",
             text:
-              `ZFS session "${state.sessionName}" is already running.\n` +
-              `  Active panes: ${state.activePanes}\n` +
-              `  Active processes: ${state.activeProcesses}\n` +
-              `  Platform: ${state.platform.platform} (${state.platform.shell})\n\n` +
-              `Use /zellij-stop to shut down, or /zellij-panes to list panes.`,
+              `ZFS session "${FLEET_SESSION}" already exists but could not switch to it.\n\n` +
+              `Use /zellij-stop to shut it down, then try /zellij-start again.`,
           }],
         };
       }
 
       // Discover available agents and create session
+      // Check if we're running inside Zellij — can't create a new session from within.
+      const insideZellij = await zfs.detectInsideZellij();
+
       const allAgents = discoverAgents("both");
       const agentDefs = allAgents
         .filter((a) => a.name !== "orchestrator")
@@ -6208,12 +6410,64 @@ Status: idle | ${formatDuration(Date.now() - fleetState.startTime)} elapsed`,
         };
       }
 
+      // Inside Zellij — apply the fleet layout to the current session instead.
+      // We can't create a new session from within, but we can switch the current
+      // session to the fleet layout.
+      if (insideZellij) {
+        // Ensure the fleet layout exists
+        const layoutPath = path.join(ctx.cwd, "zellij-layout.kdl");
+        if (!fs.existsSync(layoutPath)) {
+          const layout = zfs.getLayoutConfig() ?? generateFleetLayout(agentDefs);
+          fs.writeFileSync(layoutPath, layout, "utf-8");
+        }
+
+        // Switch to the fleet layout in this session
+        const switchResult = await zfs.switchToFleetLayout(ctx.cwd);
+        if (!switchResult.success) {
+          return {
+            content: [{
+              type: "text",
+              text: `Could not switch to fleet layout: ${switchResult.message}\n\n` +
+                `Try manually:\n` +
+                `  \`zellij action switch-layout fleet\`\n` +
+                `  (requires a \`zellij-layout.kdl\` file in the project root)`,
+            }],
+          };
+        }
+
+        // Initialize status bar (floating pane) if possible
+        zfs.initStatusBar();
+
+        // Get fleet state for summary
+        const state = zfs.getFleetState();
+
+        const summaryLines: string[] = [];
+        summaryLines.push(`✅ Fleet layout applied to session "${state.sessionName}".`);
+        summaryLines.push(``);
+        summaryLines.push(`  You are running inside Zellij session "${state.sessionName}".`);
+        summaryLines.push(`  The fleet layout is now active.`);
+        summaryLines.push(``);
+        summaryLines.push(`  Agent panes:`);
+        for (const agent of agentDefs) {
+          summaryLines.push(`    ▸ ${agent.name.padEnd(14)} - ${agent.description.slice(0, 40)}`);
+        }
+        summaryLines.push(``);
+        summaryLines.push(`  To add agent panes, use /zellij-panes to spawn them.`);
+        summaryLines.push(`  See /zellij-status for fleet overview.`);
+
+        return {
+          content: [{ type: "text", text: summaryLines.join("\n") }],
+          details: { session: state.sessionName, agents: agentDefs, layout: "in-session" },
+        };
+      }
+
       // Load layout or use default
       const layout = zfs.getLayoutConfig();
       const layoutPath = path.join(ctx.cwd, "zellij-layout.kdl");
       const hasCustomLayout = fs.existsSync(layoutPath);
 
       const result = await zfs.createSession(agentDefs, ctx.cwd);
+
 
       if (!result.success) {
         return {
@@ -6226,6 +6480,9 @@ Status: idle | ${formatDuration(Date.now() - fleetState.startTime)} elapsed`,
 
       // Initialize status bar
       zfs.initStatusBar();
+
+      // Get fleet state for summary
+      const state = zfs.getFleetState();
 
       // Show launch summary
       const summaryLines: string[] = [];

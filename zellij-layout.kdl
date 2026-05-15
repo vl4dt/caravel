@@ -41,87 +41,92 @@
 // ═══════════════════════════════════════════════════════════════
 
 // --- Main window: 3-tab layout for the fleet workspace ---
-window {
-    // Main orchestrator pane — the primary workspace
-    // This is where the main agent runs, phases are executed,
-    // and the fleet is orchestrated. It occupies the left 60%
-    // of the screen as the command-and-control centre.
-    pane {
-        type: "main"
-        align: "left"
-        size: 60
-        name: "orchestrator"
-        focus: true
-        // Start in the project root — where caravel runs
-        // Zellij will cd to the directory it was launched from
-        command: "zellij"
-        args: ["--help"]  // placeholder — replace with actual prompt/agent
-    }
+// Default fleet layout — switchable via `zellij action switch-layout fleet`
+layout {
+    name: "fleet"
 
-    // --- Right column: per-agent panes (tabbed, max 3 visible) ---
-    // The right 40% is split into tabs. Each tab shows one agent's
-    // output. Cycle through with <leader>+1-5 or the tab bar.
+    window {
+        // Main orchestrator pane — the primary workspace
+        // This is where the main agent runs, phases are executed,
+        // and the fleet is orchestrated. It occupies the left 60%
+        // of the screen as the command-and-control centre.
+        pane {
+            type: "main"
+            align: "left"
+            size: 60
+            name: "orchestrator"
+            focus: true
+            // Start in the project root — where caravel runs
+            // Zellij will cd to the directory it was launched from
+            command: "zellij"
+            args: ["--help"]  // placeholder — replace with actual prompt/agent
+        }
 
-    // Tab 1: Developer pane — active coding work
-    pane {
-        align: "right"
-        size: 40
-        name: "developer"
-        command: "zellij"
-        args: ["--help"]
-    }
+        // --- Right column: per-agent panes (tabbed, max 3 visible) ---
+        // The right 40% is split into tabs. Each tab shows one agent's
+        // output. Cycle through with <leader>+1-5 or the tab bar.
 
-    // Tab 2: Tech Lead pane — architecture review & planning
-    pane {
-        align: "right"
-        size: 40
-        name: "tech-lead"
-        command: "zellij"
-        args: ["--help"]
-    }
+        // Tab 1: Developer pane — active coding work
+        pane {
+            align: "right"
+            size: 40
+            name: "developer"
+            command: "zellij"
+            args: ["--help"]
+        }
 
-    // Tab 3: Designer pane — visual review & UI analysis
-    pane {
-        align: "right"
-        size: 40
-        name: "designer"
-        command: "zellij"
-        args: ["--help"]
-    }
+        // Tab 2: Tech Lead pane — architecture review & planning
+        pane {
+            align: "right"
+            size: 40
+            name: "tech-lead"
+            command: "zellij"
+            args: ["--help"]
+        }
 
-    // --- Optional auxiliary tabs (uncomment as needed) ---
+        // Tab 3: Designer pane — visual review & UI analysis
+        pane {
+            align: "right"
+            size: 40
+            name: "designer"
+            command: "zellij"
+            args: ["--help"]
+        }
 
-    // Tab 4: Planner pane — project planning & phase decomposition
-    // pane {
-    //     align: "right"
-    //     size: 40
-    //     name: "planner"
-    //     command: "zellij"
-    //     args: ["--help"]
-    // }
+        // --- Optional auxiliary tabs (uncomment as needed) ---
 
-    // Tab 5: Auditor pane — codebase analysis & pre-flight scan
-    // pane {
-    //     align: "right"
-    //     size: 40
-    //     name: "auditor"
-    //     command: "zellij"
-    //     args: ["--help"]
-    // }
+        // Tab 4: Planner pane — project planning & phase decomposition
+        // pane {
+        //     align: "right"
+        //     size: 40
+        //     name: "planner"
+        //     command: "zellij"
+        //     args: ["--help"]
+        // }
 
-    // --- Floating status bar ---
-    // Persistent 10-line status bar showing:
-    //   - Agent statuses (running/idle/error) with token usage
-    //   - Phase progress and task counts
-    //   - Review iterations and elapsed time
-    // The floating pane is managed by the ZFS status bar manager.
-    // Use <leader>+w to toggle visibility.
-    floating {
-        name: "status-bar"
-        y: "bottom"
-        x: "right"
-        max_width: 80
-        height: 10
+        // Tab 5: Auditor pane — codebase analysis & pre-flight scan
+        // pane {
+        //     align: "right"
+        //     size: 40
+        //     name: "auditor"
+        //     command: "zellij"
+        //     args: ["--help"]
+        // }
+
+        // --- Floating status bar ---
+        // Persistent 10-line status bar showing:
+        //   - Agent statuses (running/idle/error) with token usage
+        //   - Phase progress and task counts
+        //   - Review iterations and elapsed time
+        // The floating pane is managed by the ZFS status bar manager.
+        // Use <leader>+w to toggle visibility.
+        floating {
+            name: "status-bar"
+            y: "bottom"
+            x: "right"
+            max_width: 80
+            height: 10
+        }
     }
 }
 
