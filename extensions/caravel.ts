@@ -569,8 +569,10 @@ function buildPhaseInfo(snap: StatusBarFleetSnapshot): string {
   if (snap.paused) {
     return centerPad(`⏸ PAUSED  │  P${snap.currentPhaseIndex + 1}/${snap.totalPhases}`, BAR_WIDTH);
   }
+  // Strip embedded enumeration to avoid double-encoding
+  const cleanName = snap.currentPhaseName?.replace(/^(Phase )?P\d+:\s*/i, "") ?? "";
   const phaseLabel = snap.currentPhaseName
-    ? `P${snap.currentPhaseIndex + 1}/${snap.totalPhases}: ${snap.currentPhaseName}`
+    ? `P${snap.currentPhaseIndex + 1}/${snap.totalPhases}: ${cleanName}`
     : "No active phase";
   const pBar = snap.totalTasks > 0
     ? `[${progressBar(snap.completedTasks, snap.totalTasks, 15)} ${snap.progress}%]`
@@ -592,21 +594,31 @@ function buildReviewStatusLabel(codeApproved: number, codePending: number, desig
 /** Build review status from fleetState for the widget bar. */
 function buildWidgetReviewStatus(state: FleetState): string {
   const phase = state.phases[state.currentPhaseIndex];
-  if (!phase) return "○ 0 approved  ○ 0 pending";
+  if (!phase) return "";
   let codeApproved = 0, codePending = 0, designApproved = 0, designPending = 0;
+  let codeNeedsFix = 0, designNeedsFix = 0;
   for (const t of phase.tasks) {
     if (t.codeReviewStatus === "approved") codeApproved++;
-    else if (t.codeReviewStatus === "pending") codePending++;
+    else if (t.codeReviewStatus === "needs_fix") codeNeedsFix++;
     if (t.designReviewStatus === "approved") designApproved++;
-    else if (t.designReviewStatus === "pending") designPending++;
+    else if (t.designReviewStatus === "needs_fix") designNeedsFix++;
   }
-  const label = buildReviewStatusLabel(codeApproved, codePending, designApproved, designPending);
-  // If all reviews approved, show the R1/R2/R3 style label
   const totalApproved = codeApproved + designApproved;
-  if (totalApproved > 0 && totalApproved <= state.reviewIterations) {
-    return `✓ R${state.reviewIterations} approved`;
+  const totalNeedsFix = codeNeedsFix + designNeedsFix;
+  const totalReviews = codeApproved + codePending + codeNeedsFix + designApproved + designPending + designNeedsFix;
+  // All tasks have been through at least one review — show progress bar
+  if (totalReviews > 0) {
+    if (totalNeedsFix > 0) {
+      const pct = Math.round((totalApproved / totalReviews) * 100);
+      return `R${state.reviewIterations} · ${totalApproved}/${totalReviews} ✓  ${totalNeedsFix} needs fix`;
+    }
+    return `✓ R${state.reviewIterations} all approved`;
   }
-  return label;
+  // No reviews yet — show phase progress
+  const totalTasks = phase.tasks.length;
+  const completed = phase.tasks.filter(t => t.status === "complete").length;
+  if (completed < totalTasks) return `○ ${completed}/${totalTasks} tasks`;
+  return "✓ all tasks";
 }
 
 function buildFooter(snap: StatusBarFleetSnapshot): string {
@@ -621,7 +633,7 @@ function buildFooter(snap: StatusBarFleetSnapshot): string {
   const etaStr = snap.etaSeconds > 0 ? `│ ETA: ${formatElapsedShort(snap.etaSeconds * 1000)}` : "";
   const parts: string[] = [
     reviewLabel,
-    `Review time: ${snap.elapsed}`,
+    `${snap.elapsed} elapsed`,
     snap.zfsActive ? "ZFS" : "pi",
   ];
   if (throughputStr) parts.push(throughputStr);
@@ -662,10 +674,10 @@ export function renderCompactStatusBar(snap: StatusBarFleetSnapshot): string {
   const designPending = snap.phaseDesignReviewsPending || 0;
   const throughputStr = snap.tokensPerSec > 0 ? `│ ${formatTokenRate(snap.tokensPerSec)}` : "";
   const etaStr = snap.etaSeconds > 0 ? `│ ETA: ${formatElapsedShort(snap.etaSeconds * 1000)}` : "";
-  const tokenLine = `▸ ${formatTokenCount(snap.totalFleetTokens)} tokens (fleet total)${throughputStr}${etaStr}  │  per-agent: ${formatTokenCount(snap.totalAgentInputTokens)}i / ${formatTokenCount(snap.totalAgentOutputTokens)}o  │  ${buildReviewStatusLabel(codeApproved, codePending, designApproved, designPending)}`;
-  const elapsedLine = `Review time: ${snap.elapsed}`;
+  const tokenLine = `▸ ${formatTokenCount(snap.totalFleetTokens)} tokens${throughputStr}${etaStr}  │  ${formatTokenCount(snap.totalAgentInputTokens)}i / ${formatTokenCount(snap.totalAgentOutputTokens)}o  │  ${buildReviewStatusLabel(codeApproved, codePending, designApproved, designPending)}`;
+  const elapsedLine = `${snap.elapsed} elapsed`;
   const modeLine = snap.zfsActive ? "[ZFS]" : "[pi]";
-  const header = `${snap.fleetName}  ${modeLine}  │  P${snap.currentPhaseIndex + 1}/${snap.totalPhases}`;
+  const header = `${snap.fleetName}  ${modeLine}  │  P${snap.currentPhaseIndex + 1}/${snap.totalPhases}  │  ${snap.currentPhaseName || "idle"}`;
   // agentsGrid may contain multiple lines when health bar is appended;
   // each line is wrapped in its own border to preserve the grid look.
   const agentLines = agentsGrid.split("\n");
@@ -2609,19 +2621,29 @@ function loadState(ctx: ExtensionContext): boolean {
   if (typeof s.phases !== "object" || !Array.isArray(s.phases)) return false;
   if (typeof s.currentPhaseIndex !== "number") return false;
 
+  // Only restore state if it's actually useful (fleet is actively running)
+  // When fleet is idle (no phases, no active agents), clear stale persisted data
+  // so the widget bar shows a clean "idle" state, not ghost data from last session.
+  const hasActivePhases = (s.phases && Array.isArray(s.phases) && s.phases.some(p => p.status === "running" || p.status === "reviewing"));
+  const hasIncompleteTasks = (s.phases && Array.isArray(s.phases) && s.phases.some(p => (p.tasks || []).some(t => t.status !== "complete")));
+  const isReallyActive = hasActivePhases || hasIncompleteTasks;
+
   fleetState = {
-    phases: s.phases ?? [],
-    currentPhaseIndex: s.currentPhaseIndex ?? 0,
-    activeAgents: s.activeAgents ?? [],
-    paused: s.paused ?? false,
-    startTime: s.startTime != null && !isNaN(s.startTime) ? s.startTime : Date.now(),
-    reviewIterations: s.reviewIterations ?? 0,
+    phases: isReallyActive ? (s.phases ?? []) : [],
+    currentPhaseIndex: isReallyActive ? (s.currentPhaseIndex ?? 0) : 0,
+    activeAgents: isReallyActive ? (s.activeAgents ?? []) : [],
+    paused: isReallyActive ? (s.paused ?? false) : false,
+    startTime: isReallyActive ? (s.startTime != null && !isNaN(s.startTime) ? s.startTime : Date.now()) : Date.now(),
+    reviewIterations: isReallyActive ? (s.reviewIterations ?? 0) : 0,
     maxReviewIterations: s.maxReviewIterations ?? fleetState.maxReviewIterations,
-    recentOutput: s.recentOutput ?? "",
-    totalFleetTokens: s.totalFleetTokens != null && !isNaN(s.totalFleetTokens)
-      ? s.totalFleetTokens
-      : 0,
-    mainAgentActivity: s.mainAgentActivity ?? fleetState.mainAgentActivity,
+    recentOutput: isReallyActive ? (s.recentOutput ?? "") : "",
+    totalFleetTokens: isReallyActive ? (s.totalFleetTokens != null && !isNaN(s.totalFleetTokens) ? s.totalFleetTokens : 0) : 0,
+    mainAgentActivity: isReallyActive ? (s.mainAgentActivity ?? fleetState.mainAgentActivity) : {
+      status: "idle",
+      action: "idle",
+      detail: "No active work",
+      timestamp: Date.now(),
+    },
   };
 
   return true;
@@ -2750,8 +2772,26 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
   });
   const indicatorLine = formatIndicatorLine(messagingIndicators, theme);
 
-  if (fleetState.phases.length === 0) {
-    // ── IDLE ──
+  // ── Idle state: no active phases or all phases complete ──
+  const allComplete = fleetState.phases.length > 0 && fleetState.phases.every(p => p.status === "complete");
+  const isIdle = fleetState.phases.length === 0 || allComplete;
+  if (isIdle) {
+    // Clear stale completed state so the widget bar goes back to clean idle
+    if (allComplete) {
+      fleetState = {
+        phases: [],
+        currentPhaseIndex: 0,
+        activeAgents: [],
+        paused: false,
+        startTime: Date.now(),
+        reviewIterations: 0,
+        maxReviewIterations: fleetState.maxReviewIterations,
+        recentOutput: "",
+        totalFleetTokens: 0,
+        mainAgentActivity: { status: "idle", action: "idle", detail: "No active work", timestamp: Date.now() },
+      };
+      saveState();
+    }
     const agentCount = discoverAgents("both").length;
     const statusIcon = fleetState.paused ? theme.fg("warning", "⏸") : theme.fg("muted", "●");
     const statusText = fleetState.paused ? "PAUSED" : "IDLE";
@@ -2765,16 +2805,19 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
       edge(`[░░░░░░░░░░░░░░░░░░░░] 0%  ${muted("│")}  ${agentCount} agents configured  │  ${elapsed}`),
       indicatorLine ? edge(muted(indicatorLine)) : null,
       followLine ? edge(theme.fg("dim", `  ${followLine}`)) : edge(muted("  last: idle - no active work yet")),
-      edge(`${theme.fg("dim", `${buildWidgetReviewStatus(fleetState)}`)}  ${muted("│")}  ${muted(`Review time: ${elapsed}`)}`),
-      edge(muted(`▸ fleet: ${formatTokens(fleetState.totalFleetTokens)}${followLine ? "  │  " + theme.fg("dim", `followed: ${followedAgent.agent}`) : ""}`)),
+      edge(`${theme.fg("dim", `${buildWidgetReviewStatus(fleetState)}`)}  ${muted("│")}  ${muted(`${elapsed} elapsed`)}`),
+      edge(muted(`▸ ${formatTokens(fleetState.totalFleetTokens)} tokens${followLine ? "  │  " + theme.fg("dim", `followed: ${followedAgent.agent}`) : ""}`)),
       healthLine,
     ].filter(Boolean);
   }
 
   // ── ACTIVE ──
   const phase = fleetState.phases[fleetState.currentPhaseIndex];
+  // Strip embedded enumeration from phase name to avoid double-encoding
+  // (phase names may include "Phase P5: " prefix, widget adds "P1/1: " prefix)
+  const cleanPhaseName = phase.name.replace(/^(Phase )?P\d+:\s*/i, "");
   const phaseLabel = phase
-    ? theme.fg("accent", `P${fleetState.currentPhaseIndex + 1}/${fleetState.phases.length}: ${phase.name}`)
+    ? theme.fg("accent", `P${fleetState.currentPhaseIndex + 1}/${fleetState.phases.length}: ${cleanPhaseName}`)
     : theme.fg("muted", "No current phase");
 
   const sIcon = phase
@@ -2818,10 +2861,10 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
     return `${name}(${inp}/${out})`;
   }).join("  │  ");
   const tokenLine = agentTokens
-    ? `▸ fleet: ${formatTokens(totalInput)}in / ${formatTokens(totalOutput)}out  │  agents: [${agentTokens}]`
-    : `▸ fleet: ${formatTokens(fleetState.totalFleetTokens)} tokens (fleet total)  │  per-agent: none`;
+    ? `${formatTokens(totalInput)}in / ${formatTokens(totalOutput)}out  │  ${agentTokens}`
+    : `▸ ${formatTokens(fleetState.totalFleetTokens)} tokens`;
   const legendLine = agentTokens
-    ? `  ──  ${formatTokens(totalInput)}in / ${formatTokens(totalOutput)}out (fleet total)  │  per-agent breakdown in brackets`
+    ? `  ──  ${formatTokens(totalInput)}in / ${formatTokens(totalOutput)}out  │  per-agent breakdown in brackets`
     : ``;
 
   if (fleetState.paused) {
@@ -2837,7 +2880,9 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
       const statusIcon = t.status === "reviewing" ? theme.fg("accent", "◉") : theme.fg("accent", "▸");
       const statusText = t.status === "reviewing" ? "REV" : "RUN";
       const statusColor = t.status === "reviewing" ? "accent" : "success";
-      const truncatedDesc = truncate(t.description, 28);
+      // Strip embedded enumeration (e.g. "P5T1: ") from task description to avoid double-encoding
+      const cleanDesc = t.description.replace(/^(Phase )?P\d+T\d+:\s*/i, "");
+      const truncatedDesc = truncate(cleanDesc, 28);
       taskDetails.push(
         `${statusIcon} T${idx + 1} [${theme.fg(statusColor, statusText)}] ${t.agentName} → ${truncatedDesc}`,
       );
@@ -2847,8 +2892,9 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
     const lastComplete = [...phase.tasks].reverse().find((t) => t.status === "complete");
     if (lastComplete) {
       const idx = phase.tasks.indexOf(lastComplete);
+      const cleanLastDesc = lastComplete.description.replace(/^(Phase )?P\d+T\d+:\s*/i, "");
       taskDetails.push(
-        `  ${theme.fg("success", "✓")} T${idx + 1} [OK] ${lastComplete.agentName} → ${truncate(lastComplete.description, 28)}`,
+        `  ${theme.fg("success", "✓")} T${idx + 1} [OK] ${lastComplete.agentName} → ${truncate(cleanLastDesc, 28)}`,
       );
     }
 
@@ -2856,8 +2902,9 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
     if (pendingTasks.length > 0) {
       const next = pendingTasks[0];
       const idx = phase.tasks.indexOf(next);
+      const cleanNextDesc = next.description.replace(/^(Phase )?P\d+T\d+:\s*/i, "");
       taskDetails.push(
-        `  ${theme.fg("muted", "○")} T${idx + 1} [WAIT] ${next.agentName} → ${truncate(next.description, 28)}`,
+        `  ${theme.fg("muted", "○")} T${idx + 1} [WAIT] ${next.agentName} → ${truncate(cleanNextDesc, 28)}`,
       );
     }
 
@@ -2916,7 +2963,7 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
     edge(`[${bar}] ${progress}%  ${muted("│")}  ${completedTasks}/${totalTasks} tasks  │  ${elapsed}`),
     activeIndicatorLine ? edge(muted(activeIndicatorLine)) : null,
     edge(line3 + (followOutput ? followOutput : "")),
-    edge(`${theme.fg("dim", `${buildWidgetReviewStatus(fleetState)}`)}  ${muted("│")}  ${muted(`Review time: ${elapsed}`)}`),
+    edge(`${theme.fg("dim", `${buildWidgetReviewStatus(fleetState)}`)}  ${muted("│")}  ${muted(`${elapsed} elapsed`)}`),
     edge(tokenLine + (followLine ? `  │  ${followLine}` : "")),
     legendLine ? edge(muted(legendLine)) : null,
     healthLine,
@@ -5473,14 +5520,16 @@ Provide the complete corrected output with specific file changes. Address each i
     parameters: Type.Object({}),
 
     async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
-      if (fleetState.phases.length === 0) {
+      // Check for all-complete (fleet finished) before checking for no-phases
+      const allComplete = fleetState.phases.length > 0 && fleetState.phases.every(p => p.status === "complete");
+      if (allComplete || fleetState.phases.length === 0) {
         return {
           content: [{
             type: "text",
-            text: `Fleet is idle. No phases defined.
+            text: `Fleet is idle. ${allComplete ? "All phases complete." : "No phases defined."}
 Use /caravel-fleet to toggle the widget bar, or use plan_project to define phases.
 
-Status: idle | Reviews: ${buildWidgetReviewStatus(fleetState)} | Review time: ${formatDuration(Date.now() - fleetState.startTime)}`,
+Status: idle | ${formatDuration(Date.now() - fleetState.startTime)} elapsed`,
           }],
           details: { phases: fleetState.phases, agents: fleetState.activeAgents },
         };
@@ -5491,7 +5540,9 @@ Status: idle | Reviews: ${buildWidgetReviewStatus(fleetState)} | Review time: ${
 
       const phases = fleetState.phases.map((p, i) => {
         const done = p.tasks.filter((t) => t.status === "complete").length;
-        return `  P${i}: ${p.name} [${p.status}] (${done}/${p.tasks.length})`;
+        // Strip embedded enumeration to avoid double-encoding
+        const cleanName = p.name.replace(/^(Phase )?P\d+:\s*/i, "");
+        return `  P${i}: ${cleanName} [${p.status}] (${done}/${p.tasks.length})`;
       });
 
       const agents = fleetState.activeAgents.map((a) => `  ${a.name}: [${a.status.toUpperCase()}]`);
@@ -6314,7 +6365,7 @@ Status: idle | Reviews: ${buildWidgetReviewStatus(fleetState)} | Review time: ${
       const elapsed = formatDuration(Date.now() - (fleetState.startTime || Date.now()));
 
       lines.push("║  Fleet State:                                             ║");
-      lines.push(`║    Phases: ${fleetState.currentPhaseIndex + 1}/${fleetState.phases.length}  │  Progress: ${progress.padEnd(6)}  │  Review time: ${elapsed.padEnd(10)}║`);
+      lines.push(`║    Phases: ${fleetState.currentPhaseIndex + 1}/${fleetState.phases.length}  │  Progress: ${progress.padEnd(6)}  │  ${elapsed.padEnd(10)} elapsed║`);
       lines.push(`║    Tasks: ${completedTasks}/${totalTasks}  │  Reviews: ${buildWidgetReviewStatus(fleetState)}  │  Tokens: ${formatTokens(fleetState.totalFleetTokens).padEnd(10)}║`);
       if (fleetState.paused) lines.push(`║    ⚠️  PAUSED                                              ║`);
       lines.push("║");
@@ -6568,7 +6619,7 @@ Status: idle | Reviews: ${buildWidgetReviewStatus(fleetState)} | Review time: ${
           : "dim";
 
         lines.push(`║    ${sIcon} ${sText} ${phaseLabel.padEnd(44)}║`);
-        lines.push(`║    Progress: ${progress.padEnd(6)}  │  Tasks: ${completedTasks}/${totalTasks}  │  Review time: ${elapsed.padEnd(10)}║`);
+        lines.push(`║    Progress: ${progress.padEnd(6)}  │  Tasks: ${completedTasks}/${totalTasks}  │  ${elapsed.padEnd(10)} elapsed║`);
         lines.push(`║    Reviews: ${buildWidgetReviewStatus(fleetState)}  │  Tokens: ${formatTokens(fleetState.totalFleetTokens).padEnd(27)}║`);
         if (fleetState.paused) lines.push(`║    ⚠️  PAUSED                                          ║`);
       }
