@@ -5,10 +5,12 @@
  * Works with any model provider (local or cloud).
  *
  * UI:
- *   - Fleet status: persistent 6-line widget bar above the editor
- *   - The widget bar shows: header/status, phase + progress, summary stats, last action
+ *   - Fleet status: persistent 3-line widget bar above the editor
+ *   - Line 1: CARAVEL FLEET | <status> | progress | agents | elapsed
+ *   - Line 2: reviews: passed N / failed N | last: <action>
+ *   - Line 3: agent lights: [●] name │ tokens │ status/task
+ *   - Agent lights turn on (bright ●) when active, dim (●) when idle
  *   - /caravel-fleet command: toggle the widget bar visibility
- *   - The widget bar is always stable: fixed 6 lines, never changes height or width
  */
 
 import { spawn } from "node:child_process";
@@ -2927,6 +2929,14 @@ function loadCheckpoint(taskId: string): CheckpointData | null {
 // Widget bar - always exactly 4 lines, left-edge only
 // ============================================================================
 
+// ============================================================================
+// REVAMPED WIDGET BAR — 3-line compact layout
+// ============================================================================
+// Line 1: CARAVEL FLEET | <status> | % progress | N agents configured | elapsed
+// Line 2: reviews: passed N  failed N | last: <action>
+// Line 3: Agent lights: [●] name │ tokens │ status/task
+// ============================================================================
+
 function buildWidgetLines(ctx: ExtensionContext): string[] {
   const theme = ctx.ui.theme;
   const now = Date.now();
@@ -2941,31 +2951,11 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
 
   const muted = (t: string) => theme.fg("muted", t);
   const dim = (t: string) => theme.fg("dim", t);
-  const edge = (t: string) => theme.fg("borderMuted", "│") + "  " + t;
 
-  // ── Build follow indicator ──
-  let followLine = "";
-  if (followedAgent.agent) {
-    const followIcon = followedAgent.isLive ? theme.fg("success", "▸") : theme.fg("dim", "○");
-    const followColor = followedAgent.isLive ? "success" : "dim";
-    const status = followedAgent.isLive ? "LIVE" : "IDLE";
-    const followStatusColor = followedAgent.isLive ? "success" : "dim";
-    followLine = `${followIcon} ${followedAgent.agent.padEnd(14)} [${theme.fg(followStatusColor, status)}]`;
-  }
-
-  // ── Messaging indicators ──
-  // Counts come from module-level `_messagingCounts` (set via setMessagingCounts)
-  // so the widget bar always reflects the latest state.
-  const messagingIndicators = buildMessagingIndicators({
-    enabled: isMessagingEnabled(),
-  });
-  const indicatorLine = formatIndicatorLine(messagingIndicators, theme);
-
-  // ── Idle state: no active phases or all phases complete ──
+  // ── Idle state ──
   const allComplete = fleetState.phases.length > 0 && fleetState.phases.every(p => p.status === "complete");
   const isIdle = fleetState.phases.length === 0 || allComplete;
   if (isIdle) {
-    // Clear stale completed state so the widget bar goes back to clean idle
     if (allComplete) {
       fleetState = {
         phases: [],
@@ -2981,29 +2971,36 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
       };
       saveState();
     }
-    const agentCount = discoverAgents("both").length;
+
+    // ── Line 1 ──
+    const allAgents = discoverAgents("both");
+    const agentCount = allAgents.length;
     const statusIcon = fleetState.paused ? theme.fg("warning", "⏸") : theme.fg("muted", "●");
     const statusText = fleetState.paused ? "PAUSED" : "IDLE";
     const sc = fleetState.paused ? "warning" : "muted";
     const title = theme.fg("accent", "CARAVEL FLEET");
-    const healthLine = healthConfig.enabled
-      ? edge(muted(buildHealthBar([])))
-      : null;
-    return [
-      edge(`${title}  ${muted("│")}  ${theme.fg(sc, statusIcon + " " + statusText)}`),
-      edge(`[░░░░░░░░░░░░░░░░░░░░] 0%  ${muted("│")}  ${agentCount} agents configured  │  ${elapsed}`),
-      indicatorLine ? edge(muted(indicatorLine)) : null,
-      followLine ? edge(theme.fg("dim", `  ${followLine}`)) : edge(muted("  last: idle - no active work yet")),
-      edge(`${theme.fg("dim", `${buildWidgetReviewStatus(fleetState)}`)}  ${muted("│")}  ${muted(`${elapsed} elapsed`)}`),
-      edge(muted(`▸ ${formatTokens(fleetState.totalFleetTokens)} tokens${followLine ? "  │  " + theme.fg("dim", `followed: ${followedAgent.agent}`) : ""}`)),
-      healthLine,
-    ].filter(Boolean);
+    const line1 = `${title}  ${muted("│")}  ${theme.fg(sc, statusIcon + " " + statusText)}  ${muted("│")}  [${"░".repeat(20)}] 0%  ${muted("│")}  ${agentCount} agents configured  ${muted("│")}  ${elapsed}`;
+
+    // ── Line 2 ──
+    const codeApproved = fleetState.reviewIterations > 0 ? fleetState.reviewIterations : 0;
+    const codeFailed = 0;
+    const lastAction = fleetState.mainAgentActivity?.action || "idle";
+    const line2 = `reviews:  ${muted(`${codeApproved} passed  ${codeFailed} failed`)}  ${muted("│")}  last: ${dim(lastAction === "idle" ? "no active work yet" : lastAction)}`;
+
+    // ── Line 3: agent lights ──
+    const lights = allAgents.map((a) => {
+      const inactive = dim("●");
+      const name = a.name.length > 8 ? a.name.slice(0, 7) + ".." : a.name;
+      const padded = name.padEnd(8);
+      return `${inactive} ${padded}`;
+    }).join("  │  ");
+    const line3 = `agent lights: ${lights}`;
+
+    return [line1, line2, line3];
   }
 
   // ── ACTIVE ──
   const phase = fleetState.phases[fleetState.currentPhaseIndex];
-  // Strip embedded enumeration from phase name to avoid double-encoding
-  // (phase names may include "Phase P5: " prefix, widget adds "P1/1: " prefix)
   const cleanPhaseName = phase.name.replace(/^(Phase )?P\d+:\s*/i, "");
   const phaseLabel = phase
     ? theme.fg("accent", `P${fleetState.currentPhaseIndex + 1}/${fleetState.phases.length}: ${cleanPhaseName}`)
@@ -3025,138 +3022,81 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
   const filled = Math.round((progress / 100) * 20);
   const bar = "█".repeat(filled) + "░".repeat(20 - filled);
 
-  // Find failed task for explanation
-  let failExplanation = "";
-  if (phase && phase.status === "failed") {
-    const failedTasks = phase.tasks.filter((t) => t.status === "failed");
-    if (failedTasks.length > 0) {
-      const lastFailed = failedTasks[failedTasks.length - 1];
-      const reason = lastFailed.stderr ? "error" : (lastFailed.output ? "output" : "unknown");
-      failExplanation = ` - ${lastFailed.agentName}: ${reason === "error" ? "exit code" : "error"}`;
-    }
-  }
+  // Review counts
+  const codeApproved = fleetState.reviewIterations;
+  const codeFailed = 0;
+  const reviewPassed = codeApproved > 0 ? `${codeApproved} passed` : "○ 0 passed";
+  const reviewFailed = `${codeFailed} failed`;
 
+  // ── Line 1 ──
+  const allAgents = discoverAgents("both");
+  const agentCount = allAgents.length;
+  const line1 = `${theme.fg("accent", "CARAVEL FLEET")}  ${muted("│")}  ${phaseLabel}  ${muted("│")}  ${theme.fg(sColor, sIcon + " " + sText)}  ${muted("│")}  [${bar}] ${progress}%  ${muted("│")}  ${agentCount} agents configured  ${muted("│")}  ${elapsed}`;
+
+  // ── Line 2: reviews + last action ──
   const ma = fleetState.mainAgentActivity;
-  const activeAgentsList = fleetState.activeAgents.filter((a) => a.status !== "idle");
-  let line3 = "";
-
-  // ── Token usage line ──
-  const totalInput = activeAgentsList.reduce((s, a) => s + (a.inputTokens || 0), 0);
-  const totalOutput = activeAgentsList.reduce((s, a) => s + (a.outputTokens || 0), 0);
-  const agentTokens = activeAgentsList.map((a) => {
-    const name = a.name.length > 10 ? a.name.slice(0, 9) + "..." : a.name;
-    const inp = formatTokens(a.inputTokens || 0);
-    const out = formatTokens(a.outputTokens || 0);
-    return `${name}(${inp}/${out})`;
-  }).join("  │  ");
-  const tokenLine = agentTokens
-    ? `${formatTokens(totalInput)}in / ${formatTokens(totalOutput)}out  │  ${agentTokens}`
-    : `▸ ${formatTokens(fleetState.totalFleetTokens)} tokens`;
-  const legendLine = agentTokens
-    ? `  ──  ${formatTokens(totalInput)}in / ${formatTokens(totalOutput)}out  │  per-agent breakdown in brackets`
-    : ``;
-
-  if (fleetState.paused) {
-    line3 = muted("  ⏸ PAUSED");
-  } else if (phase && (phase.status === "running" || phase.status === "reviewing")) {
-    // Show per-task detail for running/reviewing phase
-    const activeTasks = phase.tasks.filter((t) => t.status === "running" || t.status === "reviewing");
-    const pendingTasks = phase.tasks.filter((t) => t.status === "pending");
-    const taskDetails: string[] = [];
-
-    activeTasks.forEach((t) => {
-      const idx = phase.tasks.indexOf(t);
-      const statusIcon = t.status === "reviewing" ? theme.fg("accent", "◉") : theme.fg("accent", "▸");
-      const statusText = t.status === "reviewing" ? "REV" : "RUN";
-      const statusColor = t.status === "reviewing" ? "accent" : "success";
-      // Strip embedded enumeration (e.g. "P5T1: ") from task description to avoid double-encoding
-      const cleanDesc = t.description.replace(/^(Phase )?P\d+T\d+:\s*/i, "");
-      const truncatedDesc = truncate(cleanDesc, 28);
-      taskDetails.push(
-        `${statusIcon} T${idx + 1} [${theme.fg(statusColor, statusText)}] ${t.agentName} → ${truncatedDesc}`,
-      );
-    });
-
-    // Show last completed task in the phase
-    const lastComplete = [...phase.tasks].reverse().find((t) => t.status === "complete");
-    if (lastComplete) {
-      const idx = phase.tasks.indexOf(lastComplete);
-      const cleanLastDesc = lastComplete.description.replace(/^(Phase )?P\d+T\d+:\s*/i, "");
-      taskDetails.push(
-        `  ${theme.fg("success", "✓")} T${idx + 1} [OK] ${lastComplete.agentName} → ${truncate(cleanLastDesc, 28)}`,
-      );
-    }
-
-    // Show pending task that will run next
-    if (pendingTasks.length > 0) {
-      const next = pendingTasks[0];
-      const idx = phase.tasks.indexOf(next);
-      const cleanNextDesc = next.description.replace(/^(Phase )?P\d+T\d+:\s*/i, "");
-      taskDetails.push(
-        `  ${theme.fg("muted", "○")} T${idx + 1} [WAIT] ${next.agentName} → ${truncate(cleanNextDesc, 28)}`,
-      );
-    }
-
-    line3 = taskDetails.join("  │  ");
-    if (!line3) {
-      line3 = muted("  idle - waiting for work");
-    }
-  } else if (ma && ma.action !== "idle" && (ma.status === "executing" || ma.status === "thinking")) {
-    const actIcon = ma.status === "thinking" ? theme.fg("dim", "◇") : theme.fg("accent", "▸");
-    line3 = `  ${actIcon} running: ${ma.action} → ${truncate(ma.detail, 20)}`;
-  } else if (ma && ma.action !== "idle") {
+  let lastActionStr = "idle - no active work yet";
+  if (ma && ma.action !== "idle") {
     const age = now - ma.timestamp;
     const ts = age < 60000 ? `${Math.round(age / 1000)}s ago`
       : age < 3600000 ? `${Math.round(age / 60000)}m ago`
       : `${Math.round(age / 3600000)}h ago`;
-    line3 = `  ▸ last: ${ma.action} → ${truncate(ma.detail, 20)}  (${ts})`;
-  } else if (activeAgentsList.length > 0) {
-    line3 = activeAgentsList.map((a) => {
-      const model = a.model || "unknown";
-      return `  ${theme.fg("accent", "▸")} ${a.name} → ${model}`;
-    }).join("  │  ");
+    lastActionStr = `${ma.action} → ${truncate(ma.detail, 30)} (${ts})`;
   } else {
-    line3 = muted("  idle - waiting for work");
-  }
-
-  // Build a follow output snippet to append to the last line
-  let followOutput = "";
-  if (followedAgent.agent) {
-    const buf = agentOutputBuffers.get(`agent-${followedAgent.agent}`);
-    if (buf && buf.stdout.trim()) {
-      const lines = buf.stdout.trim().split("\n");
-      const tail = lines.slice(-1).join(" ").trim().slice(-50);
-      if (tail) {
-        followOutput = `  │  ▸ follow: ${followedAgent.agent} → ${truncate(tail, 40)}`;
-      }
+    const activeAgentsList = fleetState.activeAgents.filter((a) => a.status !== "idle");
+    if (activeAgentsList.length > 0) {
+      lastActionStr = `${activeAgentsList[0].name} active`;
     }
   }
+  const line2 = `reviews:  ${reviewPassed}  ${dim(reviewFailed)}  ${muted("│")}  last: ${lastActionStr}`;
 
-  const healthAgents = healthConfig.enabled
-    ? buildHealthBarFromFleet(fleetState.activeAgents)
-    : [];
-  const healthLine = healthConfig.enabled && healthAgents.length > 0
-    ? edge(muted(buildHealthBar(healthAgents)))
-    : null;
+  // ── Line 3: agent lights ──
+  const activeAgentsList = fleetState.activeAgents.filter((a) => a.status !== "idle");
+  const allAgentsInFleet = new Set<string>();
+  for (const phase of fleetState.phases) {
+    for (const t of phase.tasks) allAgentsInFleet.add(t.agentName);
+  }
+  for (const agent of fleetState.activeAgents) allAgentsInFleet.add(agent.name);
 
-  // Build messaging indicators with live counts from the messaging subsystem.
-  // Counts come from module-level `_messagingCounts` (set via setMessagingCounts)
-  // so the widget bar always reflects the latest state.
-  const activeMessagingIndicators = buildMessagingIndicators({
-    enabled: isMessagingEnabled(),
-  });
-  const activeIndicatorLine = formatIndicatorLine(activeMessagingIndicators, theme);
+  const lights = allAgentsInFleet.map((name) => {
+    const agent = fleetState.activeAgents.find((a) => a.name === name);
+    const isActive = !!agent;
+    const task = fleetState.phases.flatMap(p => p.tasks).find((t) => t.agentName === name);
 
-  return [
-    edge(`${theme.fg("accent", "CARAVEL FLEET")}  ${muted("│")}  ${phaseLabel}  ${muted("│")}  ${theme.fg(sColor, sIcon + " " + sText + failExplanation)}`),
-    edge(`[${bar}] ${progress}%  ${muted("│")}  ${completedTasks}/${totalTasks} tasks  │  ${elapsed}`),
-    activeIndicatorLine ? edge(muted(activeIndicatorLine)) : null,
-    edge(line3 + (followOutput ? followOutput : "")),
-    edge(`${theme.fg("dim", `${buildWidgetReviewStatus(fleetState)}`)}  ${muted("│")}  ${muted(`${elapsed} elapsed`)}`),
-    edge(tokenLine + (followLine ? `  │  ${followLine}` : "")),
-    legendLine ? edge(muted(legendLine)) : null,
-    healthLine,
-  ].filter(Boolean);
+    let light: string;
+    let color: string;
+    if (!isActive) {
+      light = dim("●");
+      color = "dim";
+    } else if (agent.status === "running") {
+      light = theme.fg("success", "●");
+      color = "success";
+    } else if (agent.status === "reviewing") {
+      light = theme.fg("accent", "●");
+      color = "accent";
+    } else if (agent.status === "error") {
+      light = theme.fg("error", "●");
+      color = "error";
+    } else {
+      light = dim("●");
+      color = "dim";
+    }
+
+    const name = name.length > 8 ? name.slice(0, 7) + ".." : name;
+    const padded = name.padEnd(8);
+
+    if (task) {
+      const tokens = formatTokens(task.tokensUsed || 0);
+      const taskShort = (task.description || "").replace(/^(Phase )?P\d+T\d+:\s*/i, "").slice(0, 18);
+      const status = agent.status === "running" ? "run" : agent.status === "reviewing" ? "rev" : "err";
+      return `${light} ${padded}  ${dim(tokens)}  ${theme.fg(color, status)}  ${dim(taskShort)}`;
+    }
+    return `${light} ${padded}  ${dim("idle")}`;
+  }).join("  │  ");
+
+  const line3 = `agent lights: ${lights}`;
+
+  return [line1, line2, line3];
 }
 
 /**
