@@ -708,7 +708,6 @@ The main agent translates these into `fleet_control` and `review_task` calls beh
 | Command | Description |
 |---------|-------------|
 | `/go` | Auto-run all phases with review between each |
-| `/grill` | Relentlessly challenge your idea (requirements + plan) → produces SCOPE.md |
 | `/analyze` | Analyze existing codebase (pre-flight scan, agent metadata, full report) |
 | `/fleet` | Toggle the fleet widget bar visibility |
 | `/diagnose` | Diagnose failed phases/tasks with structured root-cause analysis |
@@ -810,14 +809,13 @@ caravel/
 │   ├── planner.md        # Conversational planner (interviews user, generates plans)
 │   └── auditor.md        # Codebase analyzer (scans existing projects)
 ├── skills/
-│   ├── analyze.md        # /analyze command
-│   ├── plan.md           # /plan command
-│   ├── grill.md          # /grill command — pre-plan stress test
-│   ├── progress.md       # Progress feedback templates
-│   ├── code-review.md    # Code review checklist
-│   ├── design-review.md  # Design review checklist
-│   ├── fleet-orchestration.md  # Auto-orchestration guidance
-│   └── zellij-fleet.md   # ZFS user guide (workflows, shortcuts, troubleshooting)
+│   ├── analyze/SKILL.md      # /analyze command
+│   ├── plan/SKILL.md         # /plan command
+│   ├── progress/SKILL.md     # Progress feedback templates
+│   ├── code-review/SKILL.md  # Code review checklist
+│   ├── design-review/SKILL.md # Design review checklist
+│   ├── fleet-orchestration/SKILL.md  # Auto-orchestration guidance
+│   └── zellij-fleet/SKILL.md   # ZFS user guide (workflows, shortcuts, troubleshooting)
 └── prompts/
     └── task-brief.md     # Task brief template
 ```

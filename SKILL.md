@@ -102,19 +102,7 @@ User: "I want to build a kanban board app with drag-and-drop"
 ```
 
 You respond:
-1. **If scope is unclear** — Run `/grill` first, THEN delegate to the planner:
-   ```javascript
-   // Step 1: Grill to establish foundations (persisted to SCOPE.md)
-   subagent("grill", "Run the project scope grill — challenge requirements and plan relentlessly")
-   
-   // Step 2: After grill completes, delegate to planner
-   subagent("planner", "Help plan this project: {user's description}")
-   ```
-   The grill asks **one question at a time**, relentlessly challenging both **requirements** (why build this? who for? what's success?) and **plan** (right approach? what's missing?). Output persists to `SCOPE.md`.
-   
-   After the grill, if scope is still unclear, delegate to the planner. The planner reads `SCOPE.md` for context.
-
-2. **If scope is clear** — Plan the project yourself using `plan_project`, then run `/caravel-go`:
+1. **If scope is clear** — Plan the project yourself using `plan_project`, then run `/caravel-go`:
    ```javascript
    plan_project({ name: "...", phases: [...] })
    fleet_control(action = "go")  // auto-runs all phases with review between each

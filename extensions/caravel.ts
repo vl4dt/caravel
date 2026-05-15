@@ -2155,6 +2155,11 @@ function ensureZFS(): ZFS {
     zfs = new ZFS();
     zfs.setCwd(process.cwd());
     zfs.checkAndInitZellij();
+    // Register ZFS tools and session hooks (must be called once at first init)
+    if (_pi) {
+      zfs.registerExtension(_pi);
+      zfs.registerHook(_pi);
+    }
   }
   return zfs;
 }
@@ -5836,79 +5841,6 @@ Status: idle | ${formatDuration(Date.now() - fleetState.startTime)} elapsed`,
         response += `  ${theme.fg("accent", "→")} Reduce task scope or switch to a larger-context model\n`;
       }
       response += "\n";
-
-      return { content: [{ type: "text", text: response }] };
-    },
-  });
-
-  // ---- /grill: relentlessly challenge the user's idea ----
-
-  pi.registerCommand("grill", {
-    description: "Relentlessly challenge the user's project idea from two angles - requirements (why) and plan (how). One question at a time. Persists to SCOPE.md.",
-    handler: async (_args, ctx) => {
-      const th = ctx.ui.theme;
-      const sep = theme.fg("dim", "─").repeat(52);
-
-      // Create initial SCOPE.md template
-      const scopePath = "SCOPE.md";
-      const scopeTemplate = `# Project Scope
-
-> Grill started: ${new Date().toISOString().split("T")[0]}
-> Status: In progress
-> Questions asked: 0
-> User confirmed: Pending
-> Ready to plan: Pending
-
-## Requirements (The "Why")
-
-| # | Question | Answer | Confirmed |
-|---|----------|--------|-----------|
-| 1 | Problem? |        | ☐ Pending |
-| 2 | Users?   |        | ☐ Pending |
-| 3 | Success? |        | ☐ Pending |
-| 4 | Scope?   |        | ☐ Pending |
-| 5 | Not built? |      | ☐ Pending |
-
-## Design Decisions (The "How")
-
-| # | Decision | Answer | Confirmed |
-|---|----------|--------|-----------|
-| 1 | Stack?   |        | ☐ Pending |
-| 2 | Priority |        | ☐ Pending |
-| 3 | Scale?   |        | ☐ Pending |
-
-## Risks & Unknowns
-
-- None yet (grill in progress)
-
-## Sign-Off
-
-- User confirmed: ☐ Not confirmed
-- Ready to plan: ☐ Not ready
-`;
-
-      try {
-        await fs.promises.writeFile(scopePath, scopeTemplate, "utf-8");
-      } catch {
-        // Silently continue if we can't write
-      }
-
-      let response = "";
-      response += theme.fg("dim", "PROJECT SCOPE GRILL") + "\n";
-      response += theme.fg("dim", sep) + "\n";
-      response += "\n";
-      response += theme.fg("accent", "🔥 Grill mode engaged — challenging your idea from two angles:\n\n") + "\n";
-      response += theme.fg("dim", "  Angle A — Requirements  (Why are we building this? What problem does it solve?)") + "\n";
-      response += theme.fg("dim", "  Angle B — Plan         (Is this the right approach? What are we missing?)") + "\n";
-      response += "\n";
-      response += theme.fg("dim", sep) + "\n\n";
-      response += theme.fg("dim", "One question at a time. I'll provide a recommended answer with reasoning.\n\n") + "\n";
-      response += theme.fg("accent", "📋 First question — The Problem:\n\n") + "\n";
-      response += theme.fg("dim", "What problem are we actually solving? Who is this for? What do they do today?") + "\n";
-      response += theme.fg("dim", "My guess: You have a specific pain point that this project addresses.") + "\n";
-      response += theme.fg("dim", "Is that right, or is the real problem something else?") + "\n\n";
-      response += theme.fg("dim", "Your answer will be saved to SCOPE.md.\n\n") + "\n";
-      response += theme.fg("muted", "Artifacts: " + scopePath + " will persist your answers. Answer and I'll push the next question.") + "\n";
 
       return { content: [{ type: "text", text: response }] };
     },

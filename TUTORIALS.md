@@ -276,93 +276,6 @@ node index.js config set theme light
 
 ---
 
-### T3 — The Grill: Establishing Foundations First
-
-**Goal:** Learn the `/grill` command — the pre-plan stress test that prevents wasted effort.
-
-**Time:** 10–15 minutes
-
-**What you'll learn:**
-- How to rigorously challenge your own project idea before building
-- Why the grill is a required step when scope is unclear (auto-triggered)
-- How `SCOPE.md` becomes a durable artifact the planner reads
-- The two angles of challenge: **requirements** (why) and **plan** (how)
-
-#### Step 1: Trigger the Grill
-
-> "/grill"
-
-You'll see the grill engaged:
-
-```
-PROJECT SCOPE GRILL
-────────────────────────────────────────────────────────────
-🔥 Grill mode engaged — I'm going to challenge your idea from two angles:
-
-  Angle A — Requirements  (Why are we building this? What problem does it solve?)
-  Angle B — Plan         (Is this the right approach? What are we missing?)
-────────────────────────────────────────────────────────────
-
-📋 First question — The Problem:
-
-What problem are we actually solving? Who is this for?
-My guess: You have a specific pain point that this project addresses.
-Is that right, or is the real problem something else?
-```
-
-Answer the question. The agent asks **one at a time**, provides a recommended answer, and pushes back if your answer is vague.
-
-#### Step 2: Experience the Challenge
-
-The grill will ask questions across both angles:
-
-**Requirements (Why):**
-- What problem are we solving?
-- Who is this for?
-- What does success look like?
-- What are we NOT building?
-
-**Plan (How):**
-- Is this the right approach?
-- What are we missing?
-- What assumptions are we making?
-- What could go wrong?
-
-Each question gets a **recommended answer** with reasoning. Push back if you disagree — that's the point.
-
-#### Step 3: Sign Off
-
-When you say "let's move on" or "that's enough":
-
-```
-✓ Scope produced: SCOPE.md
-Questions asked: 14 | Confirmed: Yes
-Ready to plan → run /plan or /go
-```
-
-#### Step 4: Use SCOPE.md as Input for Planning
-
-Now the planner has durable context. Run `/plan` or describe your project — the planner reads `SCOPE.md` first.
-
-#### Why This Matters
-
-Without the grill, you'll rush into building something based on vague assumptions. The grill forces you to:
-1. **Clarify the problem** before solving it
-2. **Expose hidden assumptions** before they become costly mistakes
-3. **Create a decision record** (SCOPE.md) that survives session restarts
-4. **Save time** by catching scope creep early
-
-#### Troubleshooting
-
-| Issue | Fix |
-|-------|-----|
-| Grill doesn't start | Make sure you have `skills/grill.md` installed |
-| Can't answer a question | Say "decide for me" — the agent will make a recommendation |
-| Want to skip | Say "skip the grill" (only works for simple, clear requests) |
-| Questions feel too basic | Say "push harder" — the agent will dig deeper |
-
----
-
 ### Bonus: Exploring Fleet Commands
 
 **Goal:** Get comfortable with all fleet control commands.
@@ -1164,7 +1077,6 @@ Getting Started (5 min)
 Tier 1: First Fleet (55 min total)
   T1 → Core pipeline        ──▶ You understand the basic workflow
   T2 → Existing codebase    ──▶ You can extend existing projects
-  T3 → The grill            ──▶ You establish foundations before planning
   Bonus → Fleet commands      ──▶ You can control the fleet
     │
     ▼
