@@ -13,7 +13,7 @@
 - [Tier 2: Review & Quality (Intermediate)](#tier-2-review--quality)
 - [Tier 3: Real Projects (Advanced)](#tier-3-real-projects)
 - [Tier 4: ZFS Mode (Power User)](#tier-4-zfs-mode)
-- [Tier 5: New Features (P1–P5)](#tier-5-new-features)
+- [Tier 5: New Features](#tier-5-new-features)
 - [Tier 6: Benchmarks & Customization (Expert)](#tier-6-benchmarks--customization)
 - [Bonus: Exploring Fleet Commands](#bonus-exploring-fleet-commands)
 - [Quick Reference](#quick-reference)
@@ -741,7 +741,7 @@ In ZFS mode:
 
 ---
 
-## Tier 5: New Features (P1–P5){#tier-5-new-features}
+## Tier 5: New Features
 
 ### T13 — Agent Identity & Session Recovery
 
