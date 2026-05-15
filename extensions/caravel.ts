@@ -34,8 +34,51 @@ import {
 import { Type } from "typebox";
 import { getAgentIdentity } from "./caravel-identity";
 import { buildHealthBar, buildHealthBarFromFleet } from "./caravel-health";
+import { buildMessagingIndicators, formatIndicatorLine, setMessagingCounts as setMessagingCountsInternal } from "./caravel-widget-indicators";
 
-// ── Inline: Testability Enforcement Module ──────────────────────────────────────
+// ============================================================================
+// Messaging feature flag
+// ============================================================================
+
+let messagingEnabled = false;
+
+/** Enable or disable the messaging feature (controls widget bar indicators). */
+export function setMessagingEnabled(ctx: ExtensionContext, enabled: boolean): void {
+  messagingEnabled = enabled;
+  if (ctx.hasUI) {
+    refreshWidget(ctx);
+  }
+}
+
+/** Check if messaging is enabled. */
+export function isMessagingEnabled(): boolean {
+  return messagingEnabled;
+}
+
+/**
+ * Set the current messaging counts for the widget bar.
+ * Call this each refresh cycle with live counts from the messaging subsystem.
+ */
+export function setMessagingCounts(unread: number, escalations: number): void {
+  setMessagingCountsInternal({ unread, escalations });
+}
+
+/**
+ * Enable or disable messaging indicators in the widget bar.
+ *
+ * @param enabled   - true to show unread/escalation counts in the widget bar
+ * @param ctx       - ExtensionContext for UI refresh (optional)
+ */
+export function toggleMessaging(ctx?: ExtensionContext): void {
+  messagingEnabled = !messagingEnabled;
+  if (ctx?.hasUI) {
+    refreshWidget(ctx);
+    ctx.ui.notify(`Messaging indicators ${messagingEnabled ? "enabled" : "disabled"}`, "info");
+  }
+}
+
+// ============================================================================
+// Inline: Testability Enforcement Module ──────────────────────────────────────
 
 interface CriterionFailure {
   criterion: "test_files" | "acceptance_criteria" | "measurable_outcome";
@@ -2526,6 +2569,14 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
     followLine = `${followIcon} ${followedAgent.agent.padEnd(14)} [${theme.fg(followStatusColor, status)}]`;
   }
 
+  // ── Messaging indicators ──
+  // Counts come from module-level `_messagingCounts` (set via setMessagingCounts)
+  // so the widget bar always reflects the latest state.
+  const messagingIndicators = buildMessagingIndicators({
+    enabled: messagingEnabled,
+  });
+  const indicatorLine = formatIndicatorLine(messagingIndicators, theme);
+
   if (fleetState.phases.length === 0) {
     // ── IDLE ──
     const agentCount = discoverAgents("both").length;
@@ -2539,6 +2590,7 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
     return [
       edge(`${title}  ${muted("│")}  ${theme.fg(sc, statusIcon + " " + statusText)}`),
       edge(`[░░░░░░░░░░░░░░░░░░░░] 0%  ${muted("│")}  ${agentCount} agents configured  │  ${elapsed}`),
+      indicatorLine ? edge(muted(indicatorLine)) : null,
       followLine ? edge(theme.fg("dim", `  ${followLine}`)) : edge(muted("  last: idle - no active work yet")),
       edge(`${theme.fg("dim", `${buildWidgetReviewStatus(fleetState)}`)}  ${muted("│")}  ${muted(`Review time: ${elapsed}`)}`),
       edge(muted(`▸ fleet: ${formatTokens(fleetState.totalFleetTokens)}${followLine ? "  │  " + theme.fg("dim", `followed: ${followedAgent.agent}`) : ""}`)),
@@ -2677,9 +2729,19 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
   const healthLine = healthConfig.enabled && healthAgents.length > 0
     ? edge(muted(buildHealthBar(healthAgents)))
     : null;
+
+  // Build messaging indicators with live counts from the messaging subsystem.
+  // Counts come from module-level `_messagingCounts` (set via setMessagingCounts)
+  // so the widget bar always reflects the latest state.
+  const activeMessagingIndicators = buildMessagingIndicators({
+    enabled: messagingEnabled,
+  });
+  const activeIndicatorLine = formatIndicatorLine(activeMessagingIndicators, theme);
+
   return [
     edge(`${theme.fg("accent", "CARAVEL FLEET")}  ${muted("│")}  ${phaseLabel}  ${muted("│")}  ${theme.fg(sColor, sIcon + " " + sText + failExplanation)}`),
     edge(`[${bar}] ${progress}%  ${muted("│")}  ${completedTasks}/${totalTasks} tasks  │  ${elapsed}`),
+    activeIndicatorLine ? edge(muted(activeIndicatorLine)) : null,
     edge(line3 + (followOutput ? followOutput : "")),
     edge(`${theme.fg("dim", `${buildWidgetReviewStatus(fleetState)}`)}  ${muted("│")}  ${muted(`Review time: ${elapsed}`)}`),
     edge(tokenLine + (followLine ? `  │  ${followLine}` : "")),
