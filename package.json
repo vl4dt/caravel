@@ -23,7 +23,7 @@
   ],
   "pi": {
     "extensions": [
-      "./extensions"
+      "./extensions/caravel.ts"
     ],
     "agents": [
       "./agents"

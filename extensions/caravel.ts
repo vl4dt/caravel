@@ -2768,7 +2768,7 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
   // Counts come from module-level `_messagingCounts` (set via setMessagingCounts)
   // so the widget bar always reflects the latest state.
   const messagingIndicators = buildMessagingIndicators({
-    enabled: messagingEnabled,
+    enabled: isMessagingEnabled(),
   });
   const indicatorLine = formatIndicatorLine(messagingIndicators, theme);
 
@@ -2954,7 +2954,7 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
   // Counts come from module-level `_messagingCounts` (set via setMessagingCounts)
   // so the widget bar always reflects the latest state.
   const activeMessagingIndicators = buildMessagingIndicators({
-    enabled: messagingEnabled,
+    enabled: isMessagingEnabled(),
   });
   const activeIndicatorLine = formatIndicatorLine(activeMessagingIndicators, theme);
 
