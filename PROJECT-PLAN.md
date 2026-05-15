@@ -1,53 +1,47 @@
-# Phase P1: Agent Identity & Session Recovery - Project Plan
+# Phase P2: Health Monitoring & Stuck Detection - Project Plan
 
-> Generated: 2026-05-14 from project planning phase
+> Generated: 2026-05-15 from project planning phase
 > Phases: 1
-> Total Tasks: 12
+> Total Tasks: 10
 
 ---
 
 ## Phases
 
-### ⏳ Phase 1: Phase P1: Agent Identity & Session Recovery
+### ⏳ Phase 1: Phase P2: Health Monitoring & Stuck Detection
 
 **Status**: pending
 
 #### Tasks
 
-- [○] **T1**: P1T1: Create extensions/caravel-identity.ts with getAgentIdentity(name): returns 'caravel/<name>/primary' (deterministic
+- [○] **T1**: P2T1: Create extensions/caravel-health.ts with getHealthState(): returns persisted HealthState from .caravel/health.json
   - **Agent**: developer
   - **Review**: code + design
-- [○] **T2**: P1T1 Review: Verify extensions/caravel-identity.ts exists with 3 exported functions, .caravel/agents.json created as val
+- [○] **T2**: P2T1 Review: Verify extensions/caravel-health.ts exists with 4 exported functions, .caravel/health.json created as valid
   - **Agent**: tech-lead
   - **Review**: code + design
-- [○] **T3**: P1T2: Append to extensions/caravel-identity.ts: recordWork(identity, taskId, phase, summary), getAgentHistory(identity):
+- [○] **T3**: P2T2: Append detectStuckAgents(agents, thresholds?): StuckAgent[] to extensions/caravel-health.ts. Defaults: stuck=120s,
   - **Agent**: developer
   - **Review**: code + design
-- [○] **T4**: P1T2 Review: Verify extensions/caravel-identity.ts has 6 exported functions total, .caravel/history.json written as vali
+- [○] **T4**: P2T2 Review: Verify extensions/caravel-health.ts has detectStuckAgents exported with correct signature and defaults (stu
   - **Agent**: tech-lead
   - **Review**: code + design
-- [○] **T5**: P1T3: Create extensions/caravel-checkpoints.ts with saveCheckpoint(taskId, agentName, state), loadCheckpoint(taskId): re
+- [○] **T5**: P2T3: Append nudgeAgent(agentIdentity, checkpoint): { context: string, nudgeCount: number, escalated: boolean } to exten
   - **Agent**: developer
   - **Review**: code + design
-- [○] **T6**: P1T3 Review: Verify extensions/caravel-checkpoints.ts exists with 5 exported functions, checkpoint files created as vali
+- [○] **T6**: P2T3 Review: Verify nudgeAgent exported, returns {context, nudgeCount, escalated}, nudge count increments, escalation=tr
   - **Agent**: tech-lead
   - **Review**: code + design
-- [○] **T7**: P1T4: Append to extensions/caravel-checkpoints.ts: startPeriodicCheckpointing(taskId, intervalMs): returns number (timer
+- [○] **T7**: P2T4: Create buildHealthBar(healthState): string in extensions/caravel-health.ts. Format: '[agents: developer✓ tech-lead
   - **Agent**: developer
   - **Review**: code + design
-- [○] **T8**: P1T4 Review: Verify extensions/caravel-checkpoints.ts has 7 exported functions total, timerId returned and cleared confi
+- [○] **T8**: P2T4 Review: Verify buildHealthBar exported with correct icon format (✓/⚠/✗), widget bar integration in caravel.ts condi
   - **Agent**: tech-lead
   - **Review**: code + design
-- [○] **T9**: P1T5: Modify runPhaseInternal in extensions/caravel.ts: on task retry, call loadCheckpoint(taskId). If found, inject pre
+- [○] **T9**: P2T5: Append startHealthChecks(thresholds?): number, stopHealthChecks(): void to extensions/caravel-health.ts. Defaults:
   - **Agent**: developer
   - **Review**: code + design
-- [○] **T10**: P1T5 Review: Verify extensions/caravel.ts compiles, runPhaseInternal has checkpoint injection for retry tasks. Measurabl
-  - **Agent**: tech-lead
-  - **Review**: code + design
-- [○] **T11**: P1T6: Modify runPhaseInternal in extensions/caravel.ts: on task start, call getAgentIdentity(agentName) and store in tas
-  - **Agent**: developer
-  - **Review**: code + design
-- [○] **T12**: P1T6 Review: Verify extensions/caravel.ts compiles, runPhaseInternal has identity resolution. Measurable: file extension
+- [○] **T10**: P2T5 Review: Verify startHealthChecks/stopHealthChecks exported, 30s default, detectStuckAgents called each interval, au
   - **Agent**: tech-lead
   - **Review**: code + design
 
@@ -55,7 +49,7 @@
 
 - **Completed**: 0 tasks
 - **Failed**: 0 tasks
-- **Remaining**: 12 tasks
+- **Remaining**: 10 tasks
 
 ## Next Steps
 

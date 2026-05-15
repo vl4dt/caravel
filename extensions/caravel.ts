@@ -33,6 +33,7 @@ import {
 } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { getAgentIdentity } from "./caravel-identity";
+import { buildHealthBar, buildHealthBarFromFleet } from "./caravel-health";
 
 // ── Inline: Testability Enforcement Module ──────────────────────────────────────
 
@@ -1705,6 +1706,9 @@ let fleetState: FleetState = {
 };
 
 let widgetVisible = true;
+
+// ── Health monitoring config ───────────────────────────────────────────────────
+let healthConfig = { enabled: false };
 let _pi: ExtensionAPI | null = null;
 const activeProcesses = new Map<string, { proc: ReturnType<typeof spawn>; signal: AbortSignal }>();
 
@@ -2529,13 +2533,17 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
     const statusText = fleetState.paused ? "PAUSED" : "IDLE";
     const sc = fleetState.paused ? "warning" : "muted";
     const title = theme.fg("accent", "CARAVEL FLEET");
+    const healthLine = healthConfig.enabled
+      ? edge(muted(buildHealthBar([])))
+      : null;
     return [
       edge(`${title}  ${muted("│")}  ${theme.fg(sc, statusIcon + " " + statusText)}`),
       edge(`[░░░░░░░░░░░░░░░░░░░░] 0%  ${muted("│")}  ${agentCount} agents configured  │  ${elapsed}`),
       followLine ? edge(theme.fg("dim", `  ${followLine}`)) : edge(muted("  last: idle - no active work yet")),
       edge(`${theme.fg("dim", `${buildWidgetReviewStatus(fleetState)}`)}  ${muted("│")}  ${muted(`Review time: ${elapsed}`)}`),
       edge(muted(`▸ fleet: ${formatTokens(fleetState.totalFleetTokens)}${followLine ? "  │  " + theme.fg("dim", `followed: ${followedAgent.agent}`) : ""}`)),
-    ];
+      healthLine,
+    ].filter(Boolean);
   }
 
   // ── ACTIVE ──
@@ -2663,6 +2671,12 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
     }
   }
 
+  const healthAgents = healthConfig.enabled
+    ? buildHealthBarFromFleet(fleetState.activeAgents)
+    : [];
+  const healthLine = healthConfig.enabled && healthAgents.length > 0
+    ? edge(muted(buildHealthBar(healthAgents)))
+    : null;
   return [
     edge(`${theme.fg("accent", "CARAVEL FLEET")}  ${muted("│")}  ${phaseLabel}  ${muted("│")}  ${theme.fg(sColor, sIcon + " " + sText + failExplanation)}`),
     edge(`[${bar}] ${progress}%  ${muted("│")}  ${completedTasks}/${totalTasks} tasks  │  ${elapsed}`),
@@ -2670,6 +2684,7 @@ function buildWidgetLines(ctx: ExtensionContext): string[] {
     edge(`${theme.fg("dim", `${buildWidgetReviewStatus(fleetState)}`)}  ${muted("│")}  ${muted(`Review time: ${elapsed}`)}`),
     edge(tokenLine + (followLine ? `  │  ${followLine}` : "")),
     legendLine ? edge(muted(legendLine)) : null,
+    healthLine,
   ].filter(Boolean);
 }
 
