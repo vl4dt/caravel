@@ -56,10 +56,8 @@ layout {
             size: 60
             name: "orchestrator"
             focus: true
-            // Start in the project root — where caravel runs
-            // Zellij will cd to the directory it was launched from
-            command: "zellij"
-            args: ["--help"]  // placeholder — replace with actual prompt/agent
+            // NOTE: `command`/`args` are placeholders. Actual commands are
+            // set dynamically when panes are spawned via ZFS spawnPane().
         }
 
         // --- Right column: per-agent panes (tabbed, max 3 visible) ---
@@ -71,8 +69,6 @@ layout {
             align: "right"
             size: 40
             name: "developer"
-            command: "zellij"
-            args: ["--help"]
         }
 
         // Tab 2: Tech Lead pane — architecture review & planning
@@ -80,8 +76,6 @@ layout {
             align: "right"
             size: 40
             name: "tech-lead"
-            command: "zellij"
-            args: ["--help"]
         }
 
         // Tab 3: Designer pane — visual review & UI analysis
@@ -89,8 +83,6 @@ layout {
             align: "right"
             size: 40
             name: "designer"
-            command: "zellij"
-            args: ["--help"]
         }
 
         // --- Optional auxiliary tabs (uncomment as needed) ---
@@ -120,12 +112,15 @@ layout {
         //   - Review iterations and elapsed time
         // The floating pane is managed by the ZFS status bar manager.
         // Use <leader>+w to toggle visibility.
+        // NOTE: `command: "cat"` keeps the pane open for write-chars content delivery.
+        // The ZFS manager writes status bar content via `zellij write-chars`.
         floating {
             name: "status-bar"
             y: "bottom"
             x: "right"
             max_width: 80
             height: 10
+            command: "cat"
         }
     }
 }

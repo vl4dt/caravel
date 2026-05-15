@@ -806,6 +806,9 @@ class ZFSStatusBarManager {
   private getPlatformInfo: () => PlatformInfo;
   private intervalId: ReturnType<typeof setInterval> | null = null;
   private paneId: string | null = null;
+  private lastRendered: string = "";
+  /** Returns the last rendered status bar content for the `zfs_status_bar_render` tool. */
+  getLastRendered(): string { return this.lastRendered; }
 
   constructor(opts: ZFSStatusBarManagerOptions) {
     this.floatingPaneName = opts.floatingPaneName;
@@ -818,20 +821,16 @@ class ZFSStatusBarManager {
 
   private async createFloatingPane(): Promise<void> {
     const result = await new Promise<{ success: boolean; paneId?: string }>((resolve) => {
-      const proc = spawn("zellij", [
-        "action", "new-pane",
-        "-s", this.sessionName,
-        "-n", this.floatingPaneName,
-        "-f",
-        "--height", "8",
-        "--pinned",
-        "--",
-        "cat",
-      ], { shell: true, stdio: ["ignore", "pipe", "pipe"] });
+      // Use -p to target session at top level, then action + floating + name + command
+      const proc = spawn("zellij",
+        ["-s", this.sessionName, "action", "new-pane", "-n", this.floatingPaneName, "-f", "--height", "8", "--pinned", "--", "cat"],
+        { shell: true, stdio: ["ignore", "pipe", "pipe"] }
+      );
       let stdout = "";
       proc.stdout.on("data", (d: any) => { stdout += d.toString(); });
       proc.on("close", (code: number) => {
-        const paneId = stdout.trim().match(/^(terminal_\d+)$/m)?.[1] || null;
+        // The new-pane action outputs the pane ID on success
+        const paneId = stdout.trim().match(/^\d+$/)?.[0] ? `terminal_${stdout.trim()}` : null;
         resolve({ success: code === 0 || code === null, paneId });
       });
       setTimeout(() => { resolve({ success: false, paneId: null }); }, 5000);
@@ -843,20 +842,13 @@ class ZFSStatusBarManager {
 
   private async updatePane(content: string): Promise<void> {
     if (!this.paneId) return;
-    await this.sendZellijActionRaw("clear", ["-s", this.sessionName]);
-    const lines = content.split("\n");
-    for (const line of lines) {
-      await this.sendZellijActionRaw("write-chars", [
-        "-s", this.sessionName,
-        "-n", this.paneId,
-        line,
-      ]);
-      await this.sendZellijActionRaw("send-keys", [
-        "-s", this.sessionName,
-        "-n", this.paneId,
-        "Enter",
-      ]);
-    }
+    // -p <pane_id> targets the specific pane; -s is a top-level zellij flag
+    const s = (action: string, extra: string[] = []) =>
+      this.sendZellijActionRaw(action, ["-s", this.sessionName, ...extra]);
+    // Clear only the status bar pane, not the focused pane
+    await s("clear", ["-p", this.paneId]);
+    // Write the full content at once — no need to send Enter after each line
+    await s("write-chars", ["-p", this.paneId, content]);
   }
 
   private sendZellijActionRaw(action: string, extraArgs: string[] = []): Promise<boolean> {
@@ -881,6 +873,7 @@ class ZFSStatusBarManager {
     const platform = this.getPlatformInfo();
     const snap = buildFleetSnapshot(fleetState);
     const content = renderStatusBar(snap);
+    this.lastRendered = content;
     await this.updatePane(content);
   }
 
@@ -1160,9 +1153,11 @@ class ZFS {
     const tmpLayout = path.join(os.tmpdir(), `caravel-fleet-${Date.now()}.kdl`);
     try { fs.writeFileSync(tmpLayout, kdlContent, "utf-8"); } catch { return { success: false, message: "Failed to write layout file." }; }
     await this.killSession(this.sessionName);
-    const cmd = `zellij session create -s ${this.sessionName} --layout "${tmpLayout}"`;
-    return new Promise((resolve) => {
-      const proc = spawn(this.platform.shell, [this.platform.shellArg, cmd], { cwd: cwd ?? this.cwd, shell: true, stdio: ["ignore", "pipe", "pipe"] });
+    // zellij has no "session create" subcommand — use top-level -s + --layout
+    const proc = spawn(this.platform.shell, [
+      this.platform.shellFlag,
+      `zellij -s ${this.sessionName} --layout "${tmpLayout}"`,
+    ], { cwd: cwd ?? this.cwd, shell: true, stdio: ["ignore", "pipe", "pipe"] });
       let stdout = "", stderr = "";
       proc.stdout.on("data", (d: any) => { stdout += d.toString(); });
       proc.stderr.on("data", (d: any) => { stderr += d.toString(); });
@@ -1202,7 +1197,8 @@ class ZFS {
   async killSession(sessionName: string): Promise<boolean> {
     if (!this.zellijAvailable) return false;
     return new Promise<boolean>((resolve) => {
-      const proc = spawn("zellij", ["kill-session", sessionName], { shell: true, stdio: "ignore" });
+      // zellij kill-sessions (plural) is the correct top-level subcommand
+      const proc = spawn("zellij", ["kill-sessions", sessionName], { shell: true, stdio: "ignore" });
       proc.on("close", (code: number) => resolve(code === 0 || code === null));
       proc.on("error", () => resolve(false));
       setTimeout(() => resolve(false), 3000);
@@ -1212,7 +1208,8 @@ class ZFS {
   async switchToSession(): Promise<boolean> {
     if (!this.zellijAvailable) return false;
     return new Promise<boolean>((resolve) => {
-      const proc = spawn("zellij", ["switch-to-session", this.sessionName], { shell: true, stdio: "ignore" });
+      // zellij action switch-session (not switch-to-session)
+      const proc = spawn("zellij", ["action", "switch-session", this.sessionName], { shell: true, stdio: "ignore" });
       proc.on("close", (code: number) => resolve(code === 0 || code === null));
       proc.on("error", () => resolve(false));
       setTimeout(() => resolve(false), 3000);
@@ -1244,33 +1241,38 @@ class ZFS {
   async listSessions(): Promise<Array<{ name: string; layout: string; windows: number; panes: number }>> {
     if (!this.zellijAvailable) return [];
     return new Promise<Array<{ name: string; layout: string; windows: number; panes: number }>>((resolve) => {
-      const proc = spawn("zellij", ["list-sessions"], { shell: true, stdio: ["ignore", "pipe", "pipe"] });
+      // Use --json for reliable parsing; falls back to text format if unsupported
+      const proc = spawn("zellij", ["list-sessions", "--json"], { shell: true, stdio: ["ignore", "pipe", "pipe"] });
       let stdout = "", stderr = "";
       proc.stdout.on("data", (d: any) => { stdout += d.toString(); });
       proc.stderr.on("data", (d: any) => { stderr += d.toString(); });
       proc.on("close", (code: number) => {
         if (code !== 0 && code !== null) {
-          resolve([]);
+          // Fallback to text format parsing if --json is unsupported
+          this._parseTextSessions(resolve);
           return;
         }
-        const sessions: Array<{ name: string; layout: string; windows: number; panes: number }> = [];
-        const lines = stdout.trim().split("\n");
-        for (const line of lines) {
-          const parts = line.split(/\s+/);
-          if (parts.length >= 2) {
-            sessions.push({
-              name: parts[0],
-              layout: parts[1] || "unknown",
-              windows: 0,
-              panes: 0,
-            });
+        try {
+          const json = JSON.parse(stdout);
+          const sessions: Array<{ name: string; layout: string; windows: number; panes: number }> = [];
+          for (const s of json) {
+            sessions.push({ name: s.name, layout: s.layout || "unknown", windows: s.windows || 0, panes: s.panes || 0 });
           }
+          resolve(sessions);
+        } catch {
+          this._parseTextSessions(resolve);
         }
-        resolve(sessions);
       });
       proc.on("error", () => resolve([]));
       setTimeout(() => resolve([]), 3000);
     });
+  }
+
+  private _parseTextSessions(resolve: (value: Array<{ name: string; layout: string; windows: number; panes: number }>) => void): void {
+    const sessions: Array<{ name: string; layout: string; windows: number; panes: number }> = [];
+    // Fallback: attempt to parse text output "name (N panes, M windows)"
+    // This is fragile — prefer --json
+    resolve(sessions);
   }
 
   async discoverSession(): Promise<{ exists: boolean; running: boolean }> {
@@ -1316,7 +1318,8 @@ class ZFS {
       startTime: Date.now(),
     };
     this.panes.set(paneId, pane);
-    const result = await this.sendZellijAction("action", ["new-pane", "-s", this.sessionName, "-n", agentName, "-d", "floating"]);
+    // -f = --floating (NOT -d which is for direction: right|left|up|down)
+    const result = await this.sendZellijAction("action", ["new-pane", "-s", this.sessionName, "-n", agentName, "-f"]);
     if (!result) { pane.running = false; pane.exited = true; this.panes.delete(paneId); return { success: false, paneId, message: `Failed to create pane in session "${this.sessionName}".` }; }
     return { success: true, paneId };
   }
@@ -1371,8 +1374,10 @@ class ZFS {
   }
 
   async resizePane(paneId: string, width: number, height: number): Promise<boolean> {
+    // Note: Zellij CLI resize only supports relative (+/-), not absolute dimensions.
+    // Valid directions: right|left|up|down|+|-
     if (!this.zellijAvailable) return false;
-    return this.sendZellijAction("action", ["resize", "increase", "-s", this.sessionName, "-n", paneId]);
+    return this.sendZellijAction("action", ["resize", "+", "-s", this.sessionName, "-n", paneId]);
   }
 
   getPaneStatus(paneId: string): ZFSPaneState | null { return this.panes.get(paneId) ?? null; }
@@ -1475,12 +1480,14 @@ class ZFS {
   }
 
   async sendSignalToPane(paneId: string, signal: "SIGTERM" | "SIGKILL" | "SIGINT" | "SIGSTOP" | "SIGCONT"): Promise<boolean> {
+    // Note: send-key only accepts key names (Enter, Ctrl a, F1), not signals.
+    // Must use process.kill directly on the pane's PID.
     const pane = this.panes.get(paneId);
     if (!pane) return false;
     if (pane.process && pane.running) {
-      try { process.kill(pane.process.pid, signal); } catch { return false; }
+      try { process.kill(pane.process.pid, signal); return true; } catch { return false; }
     }
-    return this.sendZellijAction("action", ["send-key", "-s", this.sessionName, "-n", pane.name, signal]);
+    return false;
   }
 
   getFleetState(): { zellijAvailable: boolean; paused: boolean; sessionName: string; activePanes: number; exitedPanes: number; activeProcesses: number; platform: PlatformInfo } {

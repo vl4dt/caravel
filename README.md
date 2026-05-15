@@ -256,9 +256,11 @@ This means you can install default agents globally and override specific ones pe
 Two complementary views for fleet monitoring, plus natural-language control commands.
 
 **Widget Bar (Pi Mode):**
-- Persistent 6-line widget above the editor showing phase progress, agent models, token counts
-- Idle state: shows fleet readiness and last activity
-- Running state: shows per-task detail with agent name, model, and status
+- Compact 3-line widget above the editor
+- **Line 1:** `CARAVEL FLEET` · status · progress bar · agent count · elapsed time
+- **Line 2:** `reviews: passed N / failed N` · last action with timestamp
+- **Line 3:** `agent lights:` · [●] name · tokens · status/task for each fleet agent
+- Agent "lights" turn **bright ●** when active, dim ● when idle
 - Toggle: `/fleet`
 
 **Status Bar (ZFS Mode):**
@@ -634,37 +636,27 @@ Caravel monitors fleet progress through **two complementary views**:
 
 #### Widget Bar (Pi Mode)
 
-A persistent widget bar above the editor shows fleet status in real-time. It is always stable — never changes height or width:
+A compact 3-line widget bar above the editor shows fleet status in real-time. No borders, no clutter — just the essentials.
 
 **Idle:**
 ```
-╔══════════════════════════════════════════════════════════════╗
-║  CARAVEL FLEET  │  ● IDLE                                   ║
-║  [░░░░░░░░░░░░░░░░░░░] 0%  │  5 agents configured  │  1h 12m║
-║  last: idle — no active work yet                            ║
-║  ● 0 reviews completed  │  Elapsed: 1h 12m                  ║
-║  ▸ fleet: 0 tokens                                           ║
-╚══════════════════════════════════════════════════════════════╝
+CARAVEL FLEET  │  ● IDLE  │  [░░░░░░░░░░░░░░░░░░░] 0%  │  6 agents configured  │  1h 12m
+reviews:  0 passed  0 failed  │  last: idle - no active work yet
+agent lights: ● developer  │ ● tech-lead  │ ● designer  │ ● planner  │ ● auditor
 ```
 
-**Running (shows per-task detail, agent models, and token counts):**
+**Running (agent lights glow bright ● when active):**
 ```
-╔══════════════════════════════════════════════════════════════╗
-║  CARAVEL FLEET  │  P1/3: Codebase Analysis  │  ▸ RUN       ║
-║  [████████░░░░░░░░] 40%  │  2/5 tasks  │  1m 23s            ║
-║  ▸ P1 [RUN] developer → llama.cpp/Qwen3.6  ▸ P2 [WAIT]     ║
-║  2 reviews  │  Elapsed: 1m 23s                              ║
-║  ▸ tokens: 12.3k/8.1k │ [developer(12.3/8.1)]              ║
-╚══════════════════════════════════════════════════════════════╝
+CARAVEL FLEET  │  P1/3: Codebase Analysis  │  ▸ RUN  │  [████████░░░░░░░░] 40%  │  6 agents configured  │  1m 23s
+reviews:  0 passed  0 failed  │  last: developer → Scan codebase (12s)
+agent lights: ● developer  │ 1.2k  run  │ ● tech-lead  │ idle  │ ● designer  │ idle
 ```
 
 The widget bar shows:
-- **Phase label** with status (RUN / REV / DONE / FAILED)
-- **Progress bar** and task count
-- **Per-task detail** during execution: task index, agent name, model, and status
-- **Main agent activity** when idle (tool being called, path, time-ago)
-- **Active agents** with model names and token counts
-- **Fleet token totals** (input/output) for cost awareness
+- **Line 1:** Fleet name · phase label with status (RUN/REV/DONE) · progress bar · agent count · elapsed
+- **Line 2:** Review counts (passed/failed) · last action with time-ago
+- **Line 3:** Agent "lights" — one per fleet agent: [●] name · tokens used · status (run/rev/err) · task preview
+- Agent lights glow **bright** when active (running/reviewing/error), **dim** when idle
 
 Toggle visibility:
 ```
@@ -673,7 +665,7 @@ Toggle visibility:
 
 #### Status Bar (ZFS Mode)
 
-When ZFS is active, the floating status bar replaces/augments the widget bar with a full 10-line dashboard:
+When ZFS is active, the floating status bar shows a full dashboard:
 
 ```
 ╔══════════════════════════════════════════════════════════════╗
