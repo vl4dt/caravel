@@ -160,6 +160,155 @@ New-Item -ItemType SymbolicLink -Path "$env:USERPROFILE\.pi\agent\extensions\car
 >   Copy-Item extensions\caravel.ts "$env:USERPROFILE\.pi\agent\extensions\"
 >   ```
 
+## Features
+
+### Configuration Examples
+
+Concrete configuration patterns for common setups. Every example shows the full `models.json` and agent model references.
+
+**All-local setup (llama.cpp + lm-studio):**
+```json
+{
+  "llama.cpp": {
+    "baseUrl": "http://localhost:9090/v1",
+    "api": "openai-completions",
+    "apiKey": "llama.cpp",
+    "models": [{ "id": "Qwen/Qwen3.6-35B-A3B-GGUF:Q8_0", "contextWindow": 262144 }]
+  },
+  "lm-studio": {
+    "baseUrl": "http://localhost:1234/v1",
+    "api": "openai-completions",
+    "apiKey": "lmstudio",
+    "models": [
+      { "id": "google/gemma-4-e4b", "input": ["text", "image"], "contextWindow": 128000 }
+    ]
+  }
+}
+```
+
+Agent model references:
+| Agent | Model Reference |
+|-------|----------------|
+| developer | `llama.cpp/Qwen/Qwen3.6-35B-A3B-GGUF:Q8_0` |
+| tech-lead | `llama.cpp/Qwen/Qwen3.6-35B-A3B-GGUF:Q8_0` |
+| designer | `lm-studio/google/gemma-4-e4b` |
+
+**Mixed local setup (Ollama for coding, lm-studio for vision):**
+| Agent | Provider | Model |
+|-------|----------|-------|
+| developer | ollama | `ollama/qwen3:8b` |
+| tech-lead | ollama | `ollama/qwen3:8b` |
+| designer | lm-studio | `lm-studio/gemma4:e4b` |
+
+**Cloud setup (all cloud):**
+| Agent | Provider | Model |
+|-------|----------|-------|
+| developer | openai | `openai/gpt-4o` |
+| tech-lead | openai | `openai/gpt-4o` |
+| designer | openai | `openai/gpt-4o-vision` |
+
+Every agent's model is configured in its `agents/<name>.md` file using the `<provider>/<model-id>` format. The provider name must match a key in your `models.json` and the model ID must match an entry under that provider.
+
+### Activation
+
+Caravel supports two activation modes — choose based on your workflow.
+
+**Pi Mode (default — no additional setup):**
+1. Ensure agents are symlinked or copied into your Pi agent directory
+2. Verify models are configured in `models.json`
+3. Run `pi --list-models` to validate
+4. Start a session and describe your project — the fleet activates automatically
+
+**ZFS Mode (full terminal workspace):**
+1. Install Zellij (`brew install zellij` / `winget install Zellij.Zellij` / `curl ... zellij ...`)
+2. Start the fleet: `/zellij-start`
+3. Describe your project in the orchestrator pane
+4. Monitor via the floating 10-line status bar (`Ctrl+w` to toggle)
+
+**Agent Discovery:**
+Caravel discovers agents from two sources:
+- **System-wide**: `~/.pi/agent/agents/*.md` (default agents)
+- **Project-local**: `<project>/.pi/agents/*.md` (overrides system agents by name)
+
+This means you can install default agents globally and override specific ones per project.
+
+### Monitoring & Control
+
+Two complementary views for fleet monitoring, plus natural-language control commands.
+
+**Widget Bar (Pi Mode):**
+- Persistent 6-line widget above the editor showing phase progress, agent models, token counts
+- Idle state: shows fleet readiness and last activity
+- Running state: shows per-task detail with agent name, model, and status
+- Toggle: `/fleet`
+
+**Status Bar (ZFS Mode):**
+- Floating 10-line dashboard with agent grid, phase progress, token summary
+- Auto-refreshes every 2 seconds
+- Shows per-agent: name, model, current task, input/output tokens
+- Toggle: `Ctrl+w` in ZFS mode
+
+**Fleet Control Commands:**
+| Command | Action |
+|---------|--------|
+| `pause` / `pause the fleet` | Pause all agents |
+| `resume` / `continue` | Resume paused agents |
+| `skip this phase` / `next phase` | Skip to next phase |
+| `reset` / `start over` | Reset fleet state |
+| `review this phase` | Trigger manual review |
+
+### Troubleshooting
+
+Common issues and their fixes.
+
+**Agent not found / model mismatch:**
+```
+Error: Model not found: ollama/qwen3:8b
+```
+→ Verify the provider name matches a key in `models.json`. Check that the model ID exists under that provider.
+→ Run `pi --list-models` to see available models.
+
+**ZFS connection failed:**
+```
+Error: Zellij not found or not running
+```
+→ Install Zellij first. Check `zellij --version`.
+→ If running, check for stale sessions: `zellij list-sessions`.
+
+**Rate limit errors:**
+```
+Error: 429 Too Many Requests
+```
+→ Add a `rateLimit` field to your provider config in `models.json`.
+→ Reduce concurrent agents or increase the rate limit interval.
+
+**Invalid API key:**
+```
+Error: 401 Unauthorized
+```
+→ Verify your `apiKey` in `models.json` is correct.
+→ For local providers, the API key can be any placeholder (e.g., `"llama.cpp"`).
+
+**ZFS layout not applying:**
+→ Check the layout file exists: `zellij-layout.kdl` in the project root.
+→ Verify layout name matches a defined variant: `fleet`, `minimal`, `review`, or `wide`.
+→ Use `zellij action switch-layout <name>` manually.
+
+**Windows symlink errors:**
+```
+Access is denied
+```
+→ Run PowerShell as **Administrator**.
+→ Enable Developer Mode: Settings → Privacy & Security → Developer Mode.
+→ Or use `Copy-Item` instead of symlinks (see [Installation](#installation) for details).
+
+**Phases failing silently:**
+→ Check stderr for crash details (OOM, permission denied, etc.).
+→ Run the agent manually: `pi --model <model> <task>`.
+→ Verify the model is reachable: test the API endpoint directly.
+
+---
+
 ## Configuration
 
 ### 1. Define Agent Models

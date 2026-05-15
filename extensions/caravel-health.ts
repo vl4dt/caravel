@@ -435,21 +435,31 @@ function statusToIcon(status: AgentHealthStatus): string {
  * Render a health bar string for a fleet's agents.
  *
  * Format:
- *   [agents: developer✓ tech-lead⚠ designer✗]
+ *   [prefix agent1✓ agent2⚠ agent3✗]
+ *
+ * When `prefix` is omitted (or `null`), returns just
+ * `agent1✓ agent2⚠ agent3✗` (no brackets) — useful for
+ * ZFS status bar where brackets are added separately.
  *
  * Agents with no health record (unknown status) render with `?`.
  *
  * @param agents — list of agent entries with name and status.
+ * @param prefix — optional prefix (default: `"agents: "`),
+ *   or `null` for no prefix/brackets.
  * @returns the health bar string.
  */
 export function buildHealthBar(
   agents: Array<{ name: string; status?: AgentHealthStatus | string }>,
+  prefix: string | null = "agents: ",
 ): string {
   const parts = agents.map((a) => {
     const icon = a.status ? statusToIcon(a.status as AgentHealthStatus) : "?";
     return `${a.name}${icon}`;
   });
-  return `[agents: ${parts.join(" ")}]`;
+  if (prefix === null) {
+    return parts.join(" ");
+  }
+  return `[${prefix}${parts.join(" ")}]`;
 }
 
 /**

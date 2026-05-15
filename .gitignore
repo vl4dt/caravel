@@ -16,3 +16,7 @@ Thumbs.db
 
 # Caravel fleet state (persisted per project, untracked)
 .caravel/
+.caravel/agents.json
+.caravel/health.json
+.caravel/messages.json
+.caravel/seances.json

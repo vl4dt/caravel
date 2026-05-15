@@ -36,33 +36,115 @@ import { getAgentIdentity } from "./caravel-identity";
 import { buildHealthBar, buildHealthBarFromFleet } from "./caravel-health";
 import { buildMessagingIndicators, formatIndicatorLine, setMessagingCounts as setMessagingCountsInternal } from "./caravel-widget-indicators";
 import { recordTerminatedAgent, getSeanceRecordsForTask, generateRecoveryContext } from "./caravel-seance";
+import { startPeriodicCheckpointing, stopPeriodicCheckpointing } from "./caravel-checkpoints";
+import { startHealthChecks, stopHealthChecks } from "./caravel-health";
+import { saveCheckpoint } from "./caravel-checkpoints";
 
 // ============================================================================
-// Messaging feature flag
-// ============================================================================
-
-let messagingEnabled = false;
-
-// ===========================================================================
-// Seance (session) history feature flag
+// Feature Configuration ──────────────────────────────────────────────────────
+//
+// All feature hooks in runPhaseInternal are gated by this config object.
+// Each flag controls one or more integration hooks.  Set via the
+// corresponding `set*` functions below.
 // ===========================================================================
 
-/** When true, task completion/failure triggers seance recording via recordTerminatedAgent. */
-let historyEnabled = true;
+/** Feature config for all Caravel integration hooks. */
+interface FeatureConfig {
+  /** Enable/disable health monitoring (health-check interval during tasks). */
+  health: boolean;
+  /** Enable/disable periodic checkpointing (periodic save of agent checkpoints during tasks). */
+  periodicCheckpoint: boolean;
+  /** Enable/disable seance (session) recording on task completion/failure. */
+  seance: boolean;
+  /** Enable/disable checkpoint loading on task retry (inject recovered context). */
+  checkpoint: boolean;
+  /** Enable/disable agent identity resolution at task start. */
+  identity: boolean;
+  /** Enable/disable messaging indicators in the widget bar. */
+  messaging: boolean;
+}
 
-/** Enable or disable session history recording. */
+const defaultFeatureConfig: FeatureConfig = {
+  health: true,
+  periodicCheckpoint: true,
+  seance: true,
+  checkpoint: true,
+  identity: true,
+  messaging: false,
+};
+
+let featureConfig: FeatureConfig = { ...defaultFeatureConfig };
+
+/** Enable or disable all features at once. */
+export function setAllFeatures(enabled: boolean): void {
+  featureConfig.health = enabled;
+  featureConfig.periodicCheckpoint = enabled;
+  featureConfig.seance = enabled;
+  featureConfig.checkpoint = enabled;
+  featureConfig.identity = enabled;
+  featureConfig.messaging = enabled;
+}
+
+/** Get a deep copy of the current feature configuration. */
+export function getFeatureConfig(): FeatureConfig {
+  return { ...featureConfig };
+}
+
+/** Update individual feature flags. */
+export function setHealthFeature(enabled: boolean): void {
+  featureConfig.health = enabled;
+}
+
+export function setPeriodicCheckpointFeature(enabled: boolean): void {
+  featureConfig.periodicCheckpoint = enabled;
+}
+
+/**
+ * Enable or disable session history recording.
+ * This is an alias for setSeanceFeature (seance = session history).
+ */
 export function setHistoryEnabled(ctx: ExtensionContext, enabled: boolean): void {
-  historyEnabled = enabled;
+  setSeanceFeature(enabled);
+  if (ctx.hasUI) {
+    refreshWidget(ctx);
+  }
 }
 
 /** Check if session history recording is enabled. */
 export function isHistoryEnabled(): boolean {
-  return historyEnabled;
+  return featureConfig.seance;
+}
+
+/** Enable or disable seance (session) recording on task completion/failure. */
+export function setSeanceFeature(enabled: boolean): void {
+  featureConfig.seance = enabled;
+}
+
+export function isSeanceFeatureEnabled(): boolean {
+  return featureConfig.seance;
+}
+
+/** Enable or disable checkpoint loading on task retry. */
+export function setCheckpointFeature(enabled: boolean): void {
+  featureConfig.checkpoint = enabled;
+}
+
+export function isCheckpointFeatureEnabled(): boolean {
+  return featureConfig.checkpoint;
+}
+
+/** Enable or disable agent identity resolution at task start. */
+export function setIdentityFeature(enabled: boolean): void {
+  featureConfig.identity = enabled;
+}
+
+export function isIdentityFeatureEnabled(): boolean {
+  return featureConfig.identity;
 }
 
 /** Enable or disable the messaging feature (controls widget bar indicators). */
 export function setMessagingEnabled(ctx: ExtensionContext, enabled: boolean): void {
-  messagingEnabled = enabled;
+  featureConfig.messaging = enabled;
   if (ctx.hasUI) {
     refreshWidget(ctx);
   }
@@ -70,7 +152,7 @@ export function setMessagingEnabled(ctx: ExtensionContext, enabled: boolean): vo
 
 /** Check if messaging is enabled. */
 export function isMessagingEnabled(): boolean {
-  return messagingEnabled;
+  return featureConfig.messaging;
 }
 
 /**
@@ -88,11 +170,62 @@ export function setMessagingCounts(unread: number, escalations: number): void {
  * @param ctx       - ExtensionContext for UI refresh (optional)
  */
 export function toggleMessaging(ctx?: ExtensionContext): void {
-  messagingEnabled = !messagingEnabled;
+  featureConfig.messaging = !featureConfig.messaging;
   if (ctx?.hasUI) {
     refreshWidget(ctx);
-    ctx.ui.notify(`Messaging indicators ${messagingEnabled ? "enabled" : "disabled"}`, "info");
+    ctx.ui.notify(`Messaging indicators ${featureConfig.messaging ? "enabled" : "disabled"}`, "info");
   }
+}
+
+// ============================================================================
+// Feature Hooks Tracking ──────────────────────────────────────────────────────
+//
+// Module-level state for tracking which hooks were invoked.  Used by tests
+// to verify that each hook fires at the right time with the correct config.
+// ===========================================================================
+
+/** Tracks which integration hooks were invoked and their config state. */
+export interface FeatureHooksSnapshot {
+  /** Hook 1 (Phase start): config loaded, features initialized. */
+  phaseStarted: boolean;
+  /** Hook 2 (Task start): identity resolved, periodic checkpointing started. */
+  taskStarted: boolean;
+  /** Hook 3 (Task progress): health check triggered. */
+  healthCheckRun: boolean;
+  /** Hook 4 (Task complete): seance recorded, checkpoint saved. */
+  taskCompleted: boolean;
+  /** Hook 5 (Task retry): seance context injected. */
+  taskRetryInjected: boolean;
+  /** Hook 6 (Phase end): health checks stopped, periodic checkpointing stopped. */
+  phaseEnded: boolean;
+  /** Feature config state at the time each hook fired. */
+  configSnapshot: FeatureConfig;
+}
+
+/** The latest hooks snapshot.  Reset between test runs. */
+let _hooksSnapshot: FeatureHooksSnapshot | null = null;
+
+/** Reset the hooks snapshot to initial state (called between test runs). */
+export function resetHooksSnapshot(): void {
+  _hooksSnapshot = {
+    phaseStarted: false,
+    taskStarted: false,
+    healthCheckRun: false,
+    taskCompleted: false,
+    taskRetryInjected: false,
+    phaseEnded: false,
+    configSnapshot: getFeatureConfig(),
+  };
+}
+
+/** Get a copy of the current hooks snapshot. Returns null if never captured. */
+export function getHooksSnapshot(): FeatureHooksSnapshot | null {
+  return _hooksSnapshot ? { ..._hooksSnapshot } : null;
+}
+
+/** Check whether hooks snapshot has been captured. */
+export function hasHooksSnapshot(): boolean {
+  return _hooksSnapshot !== null;
 }
 
 // ============================================================================
@@ -312,6 +445,9 @@ interface StatusBarFleetSnapshot {
   platformShell?: string;
   tokensPerSec: number;
   etaSeconds: number;
+  /** Rendered health bar string (e.g. `[developer✓ tech-lead⚠ designer✗]`).
+   *  Empty string when health feature is disabled or no health data available. */
+  healthBar: string;
 }
 
 const BAR_WIDTH = 80;
@@ -394,8 +530,12 @@ function buildAgentGrid(snap: StatusBarFleetSnapshot): string {
     parts.push(statusText);
   }
   const result = parts.join("  │  ");
-  if (result.length > BAR_WIDTH - 4) return result.slice(0, BAR_WIDTH - 4) + "...";
-  return "  " + result;
+  const gridLine = result.length > BAR_WIDTH - 4 ? result.slice(0, BAR_WIDTH - 4) + "..." : "  " + result;
+  // Append health bar below agent status when health is enabled and available
+  if (snap.healthBar) {
+    return gridLine + "\n" + centerPad(snap.healthBar, BAR_WIDTH);
+  }
+  return gridLine;
 }
 
 function buildAgentDetails(snap: StatusBarFleetSnapshot): string {
@@ -526,10 +666,14 @@ export function renderCompactStatusBar(snap: StatusBarFleetSnapshot): string {
   const elapsedLine = `Review time: ${snap.elapsed}`;
   const modeLine = snap.zfsActive ? "[ZFS]" : "[pi]";
   const header = `${snap.fleetName}  ${modeLine}  │  P${snap.currentPhaseIndex + 1}/${snap.totalPhases}`;
+  // agentsGrid may contain multiple lines when health bar is appended;
+  // each line is wrapped in its own border to preserve the grid look.
+  const agentLines = agentsGrid.split("\n");
+  const agentLinesRendered = agentLines.map((l) => `${BORDER_V}${l}${BORDER_V}`);
   return [
     `${BORDER_TL}${BORDER_H.repeat(BAR_WIDTH)}${BORDER_TR}`,
     `${BORDER_V}${centerPad(header, BAR_WIDTH)}${BORDER_V}`,
-    `${BORDER_V}${agentsGrid}${BORDER_V}`,
+    ...agentLinesRendered,
     `${BORDER_V}${phaseInfo}${BORDER_V}`,
     `${BORDER_V}${tokenLine}${BORDER_V}`,
     `${BORDER_V}${elapsedLine}${BORDER_V}`,
@@ -550,7 +694,7 @@ export function buildFleetSnapshot(opts: {
   zfsSessionActive: boolean;
   lastAction?: string;
   lastActionAgo?: string;
-}): StatusBarFleetSnapshot {
+  healthAgents?: Array<{ name: string; status: string }>;}): StatusBarFleetSnapshot {
   const now = Date.now();
   const elapsed = formatDuration(now - opts.startTime);
   const currentPhase = opts.phases[opts.currentPhaseIndex];
@@ -604,6 +748,14 @@ export function buildFleetSnapshot(opts: {
   const etaSeconds = elapsedSec > 5 && currentPhaseStatus !== "complete"
     ? Math.round((opts.totalFleetTokens * 0.5) / tokensPerSec)  // rough: assume ~2x more tokens needed
     : 0;
+  // Build health bar when health feature is enabled and health data is available.
+  // Pass null prefix so the health bar renders as "name✓ name⚠ name✗"
+  // (without the "agents:" prefix) — the ZFS status bar adds its own borders.
+  const healthAgents = opts.healthAgents != null ? opts.healthAgents : [];
+  const healthBar = featureConfig.health && healthAgents.length > 0
+    ? buildHealthBar(healthAgents, null)
+    : "";
+
   return {
     zfsActive: opts.zfsActive, zfsSessionActive: opts.zfsSessionActive, fleetName: "CARAVEL FLEET",
     currentPhaseIndex: opts.currentPhaseIndex, totalPhases: opts.phases.length, currentPhaseName,
@@ -616,6 +768,7 @@ export function buildFleetSnapshot(opts: {
     phaseCodeReviewsPending: phaseCodePending,
     phaseDesignReviewsApproved: phaseDesignApproved,
     phaseDesignReviewsPending: phaseDesignPending,
+    healthBar,
   };
 }
 
@@ -2932,6 +3085,203 @@ function toggleWidgetVisibility(ctx: ExtensionContext): void {
 }
 
 // ============================================================================
+// Integration Hooks ───────────────────────────────────────────────────────────
+//
+// Six integration points wired into runPhaseInternal.  Each hook is gated
+// by the corresponding feature flag in `featureConfig` and called inline.
+// ===========================================================================
+
+// ── Timer handles ───────────────────────────────────────────────────────────
+
+let _phaseHealthTimerId: number | null = null;
+let _taskCheckpointTimerId: number | null = null;
+
+// ── Hook 1: Phase start ─────────────────────────────────────────────────────
+// Called at the very beginning of runPhaseInternal, after validation but
+// before any task processing.  Loads config and initializes features.
+// ===========================================================================
+
+function onPhaseStart(phaseIdx: number, config: FeatureConfig): void {
+  _hooksSnapshot = {
+    phaseStarted: true,
+    taskStarted: false,
+    healthCheckRun: false,
+    taskCompleted: false,
+    taskRetryInjected: false,
+    phaseEnded: false,
+    configSnapshot: { ...config },
+  };
+}
+
+// ── Hook 2: Task start ──────────────────────────────────────────────────────
+// Called at the start of each task, after agent resolution but before
+// the agent is launched.  Resolves identity and starts periodic
+// checkpointing.
+// ===========================================================================
+
+function onTaskStart(taskId: string, agentName: string, config: FeatureConfig): void {
+  _hooksSnapshot!.taskStarted = true;
+
+  // Resolve identity (gated by identity feature)
+  if (config.identity) {
+    try {
+      const identity = getAgentIdentity(agentName);
+      return;
+    } catch {
+      // No-op when identity feature is disabled
+      return;
+    }
+  }
+
+  // Start periodic checkpointing (gated by periodicCheckpoint feature)
+  if (config.periodicCheckpoint) {
+    try {
+      const timerId = startPeriodicCheckpointing(taskId, 60_000, process.cwd());
+      _taskCheckpointTimerId = timerId;
+    } catch {
+      // Periodic checkpointing is non-critical; do not regress task execution
+    }
+  }
+}
+
+// ── Hook 3: Task progress ───────────────────────────────────────────────────
+// Called during task execution for health monitoring.
+// ===========================================================================
+
+function onTaskProgress(config: FeatureConfig): void {
+  if (config.health) {
+    _hooksSnapshot!.healthCheckRun = true;
+    try {
+      _phaseHealthTimerId = startHealthChecks();
+    } catch {
+      // Health checks are non-critical; do not regress task execution
+    }
+  }
+}
+
+// ── Hook 4: Task complete ───────────────────────────────────────────────────
+// Called after a task finishes (success or failure).  Records seance and
+// saves the current checkpoint.
+// ===========================================================================
+
+function onTaskComplete(
+  taskId: string,
+  agentName: string,
+  phaseName: string,
+  taskStatus: string,
+  config: FeatureConfig,
+  output?: string,
+  filesModified?: string[],
+): void {
+  _hooksSnapshot!.taskCompleted = true;
+
+  const reason = taskStatus === "complete" ? "task_complete" : "task_failed";
+
+  // Record seance (gated by seance feature)
+  if (config.seance) {
+    try {
+      const agentIdentity = getAgentIdentity(agentName);
+      recordTerminatedAgent(
+        agentIdentity,
+        taskId,
+        phaseName,
+        reason,
+        undefined,
+        { workSummary: (output && output.trim().length > 0) ? output.slice(0, 1000) : (output || ""), filesModified },
+        process.cwd(),
+      );
+    } catch {
+      // Seance recording is non-critical; do not regress task execution
+    }
+  }
+
+  // Save checkpoint (gated by checkpoint feature)
+  if (config.checkpoint) {
+    try {
+      saveCheckpoint(taskId, agentName, { status: taskStatus, phase: phaseName }, process.cwd());
+    } catch {
+      // Checkpoint saving is non-critical; do not regress task execution
+    }
+  }
+}
+
+// ── Hook 5: Task retry ──────────────────────────────────────────────────────
+// Called when a task is retried after failure.  Injects seance context
+// into the task description.
+// ===========================================================================
+
+function onTaskRetry(
+  taskId: string,
+  config: FeatureConfig,
+): {
+  seancePrefixes: string[];
+  checkpointPrefix: string | null;
+} {
+  _hooksSnapshot!.taskRetryInjected = true;
+  const result = { seancePrefixes: [] as string[], checkpointPrefix: null as string | null };
+
+  // Load seance records for recovery (gated by seance feature)
+  if (config.seance) {
+    try {
+      const seanceRecords = getSeanceRecordsForTask(taskId, 2);
+      for (const record of seanceRecords) {
+        const recoveryContext = generateRecoveryContext(record);
+        result.seancePrefixes.push(
+          `[SEANCE RECOVERY] ${recoveryContext}\n\n[RETRYING TASK]`,
+        );
+      }
+    } catch {
+      // Seance loading is non-critical
+    }
+  }
+
+  // Load checkpoint for recovered context (gated by checkpoint feature)
+  if (config.checkpoint) {
+    try {
+      const checkpoint = loadCheckpoint(taskId);
+      if (checkpoint) {
+        result.checkpointPrefix = `[AGENT: ${checkpoint.identity}] [RECOVERED CONTEXT] ${checkpoint.summary}`;
+      }
+    } catch {
+      // Checkpoint loading is non-critical
+    }
+  }
+
+  return result;
+}
+
+// ── Hook 6: Phase end ───────────────────────────────────────────────────────
+// Called at the end of runPhaseInternal, after all tasks complete.
+// Cleans up health checks and periodic checkpointing.
+// ===========================================================================
+
+function onPhaseEnd(config: FeatureConfig): void {
+  _hooksSnapshot!.phaseEnded = true;
+
+  // Stop health checks (gated by health feature)
+  if (config.health) {
+    try {
+      stopHealthChecks();
+    } catch {
+      // Cleanup is best-effort
+    }
+  }
+
+  // Stop periodic checkpointing (gated by periodicCheckpoint feature)
+  if (config.periodicCheckpoint) {
+    try {
+      stopPeriodicCheckpointing("phase-end-cleanup");
+    } catch {
+      // Cleanup is best-effort
+    }
+  }
+
+  // Reset timer handles
+  _phaseHealthTimerId = null;
+  _taskCheckpointTimerId = null;
+}
+
+// ============================================================================
 // Auto-orchestration helpers
 // ============================================================================
 
@@ -2950,6 +3300,9 @@ async function runPhaseInternal(
   fleetState.currentPhaseIndex = phaseIdx;
   saveState();
   refreshWidget(ctx);
+
+  // ── Hook 1: Phase start ───────────────────────────────────────────────────
+  onPhaseStart(phaseIdx, featureConfig);
 
   const results: Array<{ agentName: string; exitCode: number; output: string; stderr: string }> = [];
   const allAgents = discoverAgents("both");
@@ -2975,14 +3328,17 @@ async function runPhaseInternal(
     let agentOutputTokens = 0;
     task.startedAt = Date.now();
 
-    // Resolve agent identity on task start
-    try {
-      const identity = getAgentIdentity(task.agentName);
-      if (!task.metadata) task.metadata = {};
-      task.metadata.agentIdentity = identity;
-    } catch {
-      // No-op when identity feature is disabled; do not regress task execution
+    // ── Hook 2: Task start ───────────────────────────────────────────────────
+    if (featureConfig.identity) {
+      try {
+        const identity = getAgentIdentity(task.agentName);
+        if (!task.metadata) task.metadata = {};
+        task.metadata.agentIdentity = identity;
+      } catch {
+        // No-op when identity feature is disabled
+      }
     }
+    onTaskStart(task.id, agentDef.name, featureConfig);
 
     task.status = "running";
     fleetState.activeAgents = fleetState.activeAgents.map((a) =>
@@ -3054,22 +3410,10 @@ async function runPhaseInternal(
     let effectiveTaskDesc = task.description;
     const hadPreviousFailure = task.output || task.stderr || task.reviewFeedback;
     if (hadPreviousFailure) {
-      // ── Seance recovery prefix (prepend up to 2 seance entries, oldest first) ──
-      const seancePrefixes: string[] = [];
-      const seanceRecords = getSeanceRecordsForTask(task.id, 2);
-      for (const record of seanceRecords) {
-        const recoveryContext = generateRecoveryContext(record);
-        seancePrefixes.push(
-          `[SEANCE RECOVERY] ${recoveryContext}\n\n[RETRYING TASK]: ${task.description}`,
-        );
-      }
-      const seancePrefix = seancePrefixes.join("\n\n");
-
-      // Load checkpoint to inject recovered context prefix
-      const checkpoint = loadCheckpoint(task.id);
-      const checkpointPrefix = checkpoint
-        ? `[AGENT: ${checkpoint.identity}] [RECOVERED CONTEXT] ${checkpoint.summary}`
-        : null;
+      // ── Hook 5: Task retry ──────────────────────────────────────────────────
+      const retryContext = onTaskRetry(task.id, featureConfig);
+      const seancePrefix = retryContext.seancePrefixes.join("\n\n");
+      const checkpointPrefix = retryContext.checkpointPrefix;
 
       const errorContext: string[] = [];
       if (task.stderr) errorContext.push(`Previous stderr: ${task.stderr}`);
@@ -3084,6 +3428,10 @@ async function runPhaseInternal(
         effectiveTaskDesc = `${seancePrefix}${checkpointPrefix}\n\n${task.description}`;
       }
     }
+
+    // ── Hook 3: Task progress ─────────────────────────────────────────────────
+    onTaskProgress(featureConfig);
+
     const result = await runSubagent(agentDef, effectiveTaskDesc, ctx.cwd, signal, taskProgressId, progressCb);
     agentInputTokens = result.usage?.input || 0;
     agentOutputTokens = result.usage?.output || 0;
@@ -3110,35 +3458,16 @@ async function runPhaseInternal(
     }
 
     // ── Record seance on task completion/failure (when history enabled) ──
-    if (historyEnabled) {
-      const agentIdentity = task.metadata?.agentIdentity ?? task.agentName;
-      const checkpoint = loadCheckpoint(task.id);
-      const checkpointSerializable = checkpoint
-        ? { identity: checkpoint.identity, summary: checkpoint.summary, taskId: checkpoint.taskId, phaseName: checkpoint.phaseName, timestamp: checkpoint.timestamp }
-        : undefined;
-      // Derive workSummary from task output or description
-      const workSummary = task.output && task.output.trim().length > 0
-        ? task.output.slice(0, 1000)
-        : (task.description.slice(0, 200) || "");
-      // filesModified: derive from task output if available
-      const filesModified: string[] | undefined = task.filesModified && task.filesModified.length > 0
-        ? task.filesModified
-        : undefined;
-      const reason = task.status === "complete" ? "task_complete" : "task_failed";
-      try {
-        recordTerminatedAgent(
-          agentIdentity,
-          task.id,
-          phase.name,
-          reason,
-          checkpointSerializable,
-          { workSummary, filesModified },
-          ctx.cwd,
-        );
-      } catch {
-        // Seance recording is non-critical; do not regress task execution
-      }
-    }
+    // ── Hook 4: Task complete ─────────────────────────────────────────────────
+    onTaskComplete(
+      task.id,
+      agentDef.name,
+      phase.name,
+      task.status,
+      featureConfig,
+      result.output || "",
+      task.filesModified && task.filesModified.length > 0 ? task.filesModified : undefined,
+    );
 
     // Capture stderr and mark buffer as done
     const agentBuf = agentOutputBuffers.get(agentKey);
@@ -3174,6 +3503,9 @@ async function runPhaseInternal(
   const allDone = phase.tasks.every((t) => t.status === "complete");
   phase.status = allDone ? "complete" : (phase.tasks.some((t) => t.status === "failed") ? "failed" : "reviewing");
   phase.completedAt = Date.now();
+
+  // ── Hook 6: Phase end ─────────────────────────────────────────────────────
+  onPhaseEnd(featureConfig);
 
   fleetState.activeAgents = fleetState.activeAgents.filter((a) => a.status !== "running");
 
