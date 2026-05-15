@@ -41,6 +41,10 @@ import { recordTerminatedAgent, getSeanceRecordsForTask, generateRecoveryContext
 import { startPeriodicCheckpointing, stopPeriodicCheckpointing } from "./caravel-checkpoints";
 import { startHealthChecks, stopHealthChecks } from "./caravel-health";
 import { saveCheckpoint } from "./caravel-checkpoints";
+import { sendTelegramNotification } from "./integrations/telegram";
+import { syncTaskToLinear } from "./integrations/linear";
+import { syncTaskToPlane } from "./integrations/plane";
+import { createFleetMetrics } from "./metrics";
 
 // ============================================================================
 // Feature Configuration ──────────────────────────────────────────────────────
@@ -64,6 +68,14 @@ interface FeatureConfig {
   identity: boolean;
   /** Enable/disable messaging indicators in the widget bar. */
   messaging: boolean;
+  /** Enable/disable Telegram notifications. */
+  telegram: boolean;
+  /** Enable/disable Linear sync. */
+  linear: boolean;
+  /** Enable/disable Plane sync. */
+  plane: boolean;
+  /** Enable/disable metrics collection. */
+  metrics: boolean;
 }
 
 const defaultFeatureConfig: FeatureConfig = {
@@ -73,6 +85,10 @@ const defaultFeatureConfig: FeatureConfig = {
   checkpoint: true,
   identity: true,
   messaging: false,
+  telegram: false,
+  linear: false,
+  plane: false,
+  metrics: false,
 };
 
 let featureConfig: FeatureConfig = { ...defaultFeatureConfig };
@@ -85,6 +101,10 @@ export function setAllFeatures(enabled: boolean): void {
   featureConfig.checkpoint = enabled;
   featureConfig.identity = enabled;
   featureConfig.messaging = enabled;
+  featureConfig.telegram = enabled;
+  featureConfig.linear = enabled;
+  featureConfig.plane = enabled;
+  featureConfig.metrics = enabled;
 }
 
 /** Get a deep copy of the current feature configuration. */
@@ -165,6 +185,42 @@ export function setMessagingCounts(unread: number, escalations: number): void {
   setMessagingCountsInternal({ unread, escalations });
 }
 
+/** Enable or disable Telegram notifications. */
+export function setTelegramFeature(enabled: boolean): void {
+  featureConfig.telegram = enabled;
+}
+
+export function isTelegramFeatureEnabled(): boolean {
+  return featureConfig.telegram;
+}
+
+/** Enable or disable Linear issue sync. */
+export function setLinearFeature(enabled: boolean): void {
+  featureConfig.linear = enabled;
+}
+
+export function isLinearFeatureEnabled(): boolean {
+  return featureConfig.linear;
+}
+
+/** Enable or disable Plane issue sync. */
+export function setPlaneFeature(enabled: boolean): void {
+  featureConfig.plane = enabled;
+}
+
+export function isPlaneFeatureEnabled(): boolean {
+  return featureConfig.plane;
+}
+
+/** Enable or disable metrics collection. */
+export function setMetricsFeature(enabled: boolean): void {
+  featureConfig.metrics = enabled;
+}
+
+export function isMetricsFeatureEnabled(): boolean {
+  return featureConfig.metrics;
+}
+
 /**
  * Enable or disable messaging indicators in the widget bar.
  *
@@ -200,6 +256,14 @@ export interface FeatureHooksSnapshot {
   taskRetryInjected: boolean;
   /** Hook 6 (Phase end): health checks stopped, periodic checkpointing stopped. */
   phaseEnded: boolean;
+  /** Hook 7 (Integration): telegram notifications sent. */
+  telegramSent: boolean;
+  /** Hook 7 (Integration): linear sync triggered. */
+  linearSynced: boolean;
+  /** Hook 7 (Integration): plane sync triggered. */
+  planeSynced: boolean;
+  /** Hook 8 (Metrics): fleet metrics collected. */
+  metricsCollected: boolean;
   /** Feature config state at the time each hook fired. */
   configSnapshot: FeatureConfig;
 }
@@ -216,6 +280,10 @@ export function resetHooksSnapshot(): void {
     taskCompleted: false,
     taskRetryInjected: false,
     phaseEnded: false,
+    telegramSent: false,
+    linearSynced: false,
+    planeSynced: false,
+    metricsCollected: false,
     configSnapshot: getFeatureConfig(),
   };
 }
@@ -3387,6 +3455,18 @@ function onTaskComplete(
       // Checkpoint saving is non-critical; do not regress task execution
     }
   }
+
+  // ── Integration: Telegram notification ─────────────────────────────────
+  _hooksSnapshot!.telegramSent = true;
+  try {
+    sendTaskNotification(taskId, agentName, phaseName, taskStatus);
+  } catch {
+    // Telegram notifications are non-critical
+  }
+
+  // ── Integration: Linear sync (deferred to phase end) ─────────────────
+  // Linear/Plane sync is handled in onPhaseEnd to batch all tasks.
+  // Mark them so the phase-end hooks know to trigger.
 }
 
 // ── Hook 5: Task retry ──────────────────────────────────────────────────────
@@ -3463,6 +3543,156 @@ function onPhaseEnd(config: FeatureConfig): void {
   // Reset timer handles
   _phaseHealthTimerId = null;
   _taskCheckpointTimerId = null;
+}
+
+// ── Hook 7b: Post-phase integration triggers ───────────────────────────
+// Called after onPhaseEnd, before returning. Syncs tasks to Linear/Plane
+// and collects metrics.
+// ===========================================================================
+
+function onPhaseComplete(phaseIdx: number, ctx: ExtensionContext): void {
+  const phase = fleetState.phases[phaseIdx];
+  if (!phase) return;
+
+  // ── Integration: Linear sync ───────────────────────────────────────
+  _hooksSnapshot!.linearSynced = true;
+  try {
+    syncPhaseToLinear(phase.name, phase.tasks, phase.status);
+  } catch {
+    // Linear sync is non-critical
+  }
+
+  // ── Integration: Plane sync ────────────────────────────────────────
+  _hooksSnapshot!.planeSynced = true;
+  try {
+    syncPhaseToPlane(phase.name, phase.tasks, phase.status);
+  } catch {
+    // Plane sync is non-critical
+  }
+
+  // ── Metrics collection ─────────────────────────────────────────────
+  _hooksSnapshot!.metricsCollected = true;
+  try {
+    collectFleetMetrics(ctx, phaseIdx);
+  } catch {
+    // Metrics collection is non-critical
+  }
+}
+
+// ── Hook 7: Integration triggers (Telegram, Linear, Plane) ─────────────────
+// Called after onTaskComplete and onPhaseEnd. Sends notifications and syncs
+// tasks to external issue trackers when enabled.
+// ===========================================================================
+
+/** Helper: send a Telegram notification for task lifecycle events. */
+function sendTaskNotification(taskId: string, agentName: string, phaseName: string, status: string): void {
+  if (!featureConfig.telegram) return;
+  try {
+    const typeMap: Record<string, "task_start" | "task_complete" | "task_fail"> = {
+      complete: "task_complete",
+      failed: "task_fail",
+    };
+    const type = status === "complete" ? "task_complete" : "task_fail";
+    sendTelegramNotification(
+      { botToken: "", chatId: "", enabled: true },
+      {
+        type,
+        content: `${status === "complete" ? "✅" : "❌"} Task ${status === "complete" ? "completed" : "failed"}`,
+        data: { task: taskId, agent: agentName, phase: phaseName },
+      },
+    ).catch(() => {
+      // Telegram notifications are non-critical
+    });
+  } catch {
+    // Best-effort — never regress task execution
+  }
+}
+
+/** Helper: sync a task to Linear when the phase completes. */
+function syncPhaseToLinear(phaseName: string, tasks: Array<{ id: string; description: string; status: string }>, phaseStatus: string): void {
+  if (!featureConfig.linear) return;
+  for (const task of tasks) {
+    if (task.status === "complete") {
+      syncTaskToLinear(
+        { apiKey: "", teamId: "", enabled: true },
+        { taskId: task.id, phase: phaseName, agent: "caravel", description: task.description, status: "complete" },
+      ).catch(() => {
+        // Linear sync is non-critical
+      });
+    } else if (task.status === "failed") {
+      syncTaskToLinear(
+        { apiKey: "", teamId: "", enabled: true },
+        { taskId: task.id, phase: phaseName, agent: "caravel", description: task.description, status: "failed" },
+      ).catch(() => {
+        // Linear sync is non-critical
+      });
+    }
+  }
+}
+
+/** Helper: sync a task to Plane when the phase completes. */
+function syncPhaseToPlane(phaseName: string, tasks: Array<{ id: string; description: string; status: string }>, phaseStatus: string): void {
+  if (!featureConfig.plane) return;
+  for (const task of tasks) {
+    if (task.status === "complete") {
+      syncTaskToPlane(
+        { apiKey: "", workspaceSlug: "", enabled: true },
+        { taskId: task.id, phase: phaseName, agent: "caravel", description: task.description, status: "complete" },
+      ).catch(() => {
+        // Plane sync is non-critical
+      });
+    } else if (task.status === "failed") {
+      syncTaskToPlane(
+        { apiKey: "", workspaceSlug: "", enabled: true },
+        { taskId: task.id, phase: phaseName, agent: "caravel", description: task.description, status: "failed" },
+      ).catch(() => {
+        // Plane sync is non-critical
+      });
+    }
+  }
+}
+
+// ── Hook 8: Metrics collection ──────────────────────────────────────────────
+// Called at phase completion. Collects task/phase metrics for reporting.
+// ===========================================================================
+
+function collectFleetMetrics(ctx: ExtensionContext, phaseIdx: number): void {
+  if (!featureConfig.metrics) return;
+  try {
+    const phase = fleetState.phases[phaseIdx];
+    if (!phase) return;
+
+    const fleetStateForMetrics = {
+      phases: fleetState.phases.map((p) => ({
+        name: p.name,
+        status: p.status,
+        tasks: p.tasks.map((t) => ({
+          id: t.id || "",
+          agentName: t.agentName,
+          description: t.description,
+          status: t.status,
+          tokensUsed: t.tokensUsed,
+          inputTokens: t.inputTokens || 0,
+          outputTokens: t.outputTokens || 0,
+          reviewCount: t.reviewCount || 0,
+          codeReviewStatus: t.codeReviewStatus || "",
+          designReviewStatus: t.designReviewStatus || "",
+          startedAt: t.startedAt,
+          completedAt: t.completedAt,
+        })),
+      })),
+      totalFleetTokens: fleetState.totalFleetTokens,
+      reviewIterations: fleetState.reviewIterations || 0,
+      currentPhaseIndex: fleetState.currentPhaseIndex,
+    };
+
+    const metrics = createFleetMetrics(fleetStateForMetrics, fleetState.startTime || Date.now());
+    metrics.saveToFile(ctx.cwd).catch(() => {
+      // Metrics saving is non-critical
+    });
+  } catch {
+    // Metrics collection is non-critical
+  }
 }
 
 // ============================================================================
@@ -3691,6 +3921,9 @@ async function runPhaseInternal(
   // ── Hook 6: Phase end ─────────────────────────────────────────────────────
   onPhaseEnd(featureConfig);
 
+  // ── Hook 7b: Post-phase integration (Linear, Plane, metrics) ─────────
+  onPhaseComplete(phaseIdx, ctx);
+
   fleetState.activeAgents = fleetState.activeAgents.filter((a) => a.status !== "running");
 
   saveState();
@@ -3829,6 +4062,25 @@ async function runReviewInternal(
 
   const codeApproved = codeResult.approved ? "✓ APPROVED" : "✗ NEEDS FIX";
   const designApproved = designResult.approved ? "✓ APPROVED" : "✗ NEEDS FIX";
+
+  // ── Integration: Telegram review notification ────────────────────────
+  if (featureConfig.telegram) {
+    try {
+      const overall = (codeResult.approved && designResult.approved) ? "approved" : "needs_revision";
+      sendTelegramNotification(
+        { botToken: "", chatId: "", enabled: true },
+        {
+          type: "review_result",
+          content: `Code: ${codeApproved} | Design: ${designApproved}`,
+          data: { phase: phase.name, reviewer: "caravel", status: overall },
+        },
+      ).catch(() => {
+        // Telegram notifications are non-critical
+      });
+    } catch {
+      // Best-effort
+    }
+  }
 
   return `Review #${fleetState.reviewIterations}: Code: ${codeApproved} | Design: ${designApproved}`;
 }

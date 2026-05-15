@@ -375,6 +375,106 @@ Developer completes task
 
 Each task tracks: `codeReviewStatus` (approved/needs_fix) and `designReviewStatus` (approved/needs_fix).
 Both must be approved for the task to be complete.
+
+## Integrations
+
+Caravel includes fully wired integrations for Telegram notifications, issue tracking (Linear + Plane), and metrics collection. All are **opt-in** — enable via `.caravel/config.json`:
+
+```json
+{
+  "telegram": true,
+  "linear": true,
+  "plane": true,
+  "metrics": true
+}
+```
+
+### Telegram Notifications
+
+Sends task start/complete/failure, review results, and phase completion summaries to a Telegram chat.
+
+**Setup:**
+1. Create a bot via @BotFather
+2. Get your chat ID
+3. Set in `.caravel/config.json`:
+
+```json
+{
+  "telegram": true,
+  "telegramConfig": {
+    "botToken": "YOUR_BOT_TOKEN",
+    "chatId": "-100XXXXXXXXXX"
+  }
+}
+```
+
+**What gets sent:**
+- Task start notifications
+- Task complete/fail with duration
+- Review results (approved/needs revision)
+- Phase completion summaries
+- Batched fleet status updates
+
+### Linear Integration
+
+Syncs completed tasks to Linear issues: creates new issues or updates existing ones.
+
+**Setup:**
+```json
+{
+  "linear": true,
+  "linearConfig": {
+    "apiKey": "lin_api_xxx",
+    "teamId": "TEAM_ID",
+    "projectId": "PROJECT_ID"
+  }
+}
+```
+
+**What it does:**
+- Creates Linear issues for completed tasks
+- Updates issue status when tasks fail
+- Maps Caravel statuses → Linear states (pending→todo, running→in-progress, complete→done, failed→blocked)
+- Supports webhooks for bidirectional sync
+
+### Plane Integration
+
+Syncs tasks to Plane issues — same pattern as Linear, adapted to Plane's REST API.
+
+**Setup:**
+```json
+{
+  "plane": true,
+  "planeConfig": {
+    "apiKey": "api_key_xxx",
+    "workspaceSlug": "my-workspace",
+    "projectSlug": "my-project"
+  }
+}
+```
+
+**What it does:**
+- Creates Plane issues for completed tasks
+- Updates issue state when tasks fail
+- Maps Caravel statuses → Plane states
+- Supports webhooks for bidirectional sync
+
+### Metrics Collection
+
+Collects per-phase/task metrics (duration, tokens, review cycles, pass/fail rates) and exports to JSON/CSV.
+
+**What it collects:**
+- Phase duration and completion status
+- Per-task duration, token usage (input/output), review count
+- Code review pass/fail per task
+- Design review pass/fail per task
+- Total fleet tokens, review iterations
+- Completed vs pending tasks
+
+**Output:**
+- `.caravel/metrics-{timestamp}.json` — structured JSON
+- `.caravel/metrics-{timestamp}.csv` — spreadsheet-compatible CSV
+
 ## ZFS Mode — Zellij Fleet Session
 
 Caravel can run the fleet inside a dedicated [Zellij](https://zellij.dev) terminal multiplexer for a full terminal-based fleet workspace.

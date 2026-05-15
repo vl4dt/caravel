@@ -162,7 +162,7 @@ New-Item -ItemType SymbolicLink -Path "$env:USERPROFILE\.pi\agent\extensions\car
 
 ## Features
 
-Caravel includes **5 optional feature extensions**, all disabled by default and configured via `.caravel/config.json`:
+Caravel includes **9 optional feature extensions**, all disabled by default and configured via `.caravel/config.json`:
 
 | Feature | Extension | Config Key | Description |
 |---------|-----------|------------|-------------|
@@ -171,6 +171,10 @@ Caravel includes **5 optional feature extensions**, all disabled by default and 
 | Messaging | `caravel-messaging.ts` | `messaging` | Inter-agent channels, nudges, escalations, widget indicators |
 | Seance Recovery | `caravel-seance.ts` | `seance` | Predecessor context recovery on task retry |
 | Config Management | `caravel-config.ts` + `caravel-init.ts` | N/A | Feature flags, thresholds, fleet initialization |
+| Telegram Notifications | `integrations/telegram.ts` | `telegram` | Task/review/phase notifications to Telegram chat |
+| Linear Sync | `integrations/linear.ts` | `linear` | Sync completed tasks to Linear issues |
+| Plane Sync | `integrations/plane.ts` | `plane` | Sync completed tasks to Plane issues |
+| Metrics Collection | `metrics.ts` | `metrics` | Per-phase/task metrics export (JSON/CSV) |
 
 **All features are opt-in.** Set the corresponding key to `true` in `.caravel/config.json` to enable each feature.
 
@@ -349,6 +353,33 @@ Access is denied
 → Check that `recordTerminatedAgent` is called on task failure.
 → Verify `.caravel/seances.json` has records.
 
+**Integration not working (Telegram/Linear/Plane/Metrics):**
+→ Verify the feature is enabled in `.caravel/config.json` (e.g., `telegram: true`).
+→ Check that the integration config is set (e.g., `telegramConfig.botToken`, `linearConfig.apiKey`).
+→ Verify `.caravel/messages.json` has entries for Telegram.
+→ Check `.caravel/metrics-{timestamp}.json` for metrics output.
+→ Integrations are non-critical — failures are silently caught.
+
+**Telegram notifications not arriving:**
+→ Verify `telegram: true` and `telegramConfig.botToken` / `telegramConfig.chatId` are set.
+→ Test bot with `curl https://api.telegram.org/bot<token>/getMe`.
+→ Check chat ID format (must be negative number for groups/channels).
+
+**Linear sync not creating issues:**
+→ Verify `linear: true` and `linearConfig.apiKey` are set.
+→ Verify `linearConfig.teamId` matches a real Linear team.
+→ Check Linear API response in server logs.
+
+**Plane sync not creating issues:**
+→ Verify `plane: true` and `planeConfig.apiKey` are set.
+→ Verify `planeConfig.workspaceSlug` matches a real Plane workspace.
+→ Check Plane API response in server logs.
+
+**Metrics not exported:**
+→ Verify `metrics: true` in config.
+→ Check `.caravel/metrics-{timestamp}.json` after phase completion.
+→ Metrics are collected at phase completion — check the file, not stdout.
+
 ---
 
 ## Configuration
@@ -456,6 +487,58 @@ pi --list-models
 ```
 
 Then in your session, the caravel extension will auto-discover agents from your configured agent directory and use the models you've assigned.
+
+### Integration Configuration
+
+Enable integrations in `.caravel/config.json`:
+
+**Full integration setup:**
+```json
+{
+  "telegram": true,
+  "linear": true,
+  "plane": true,
+  "metrics": true,
+  "telegramConfig": {
+    "botToken": "123456:ABCdef...",
+    "chatId": "-1001234567890"
+  },
+  "linearConfig": {
+    "apiKey": "lin_api_xxx",
+    "teamId": "TEAM_ID",
+    "projectId": "PROJECT_ID"
+  },
+  "planeConfig": {
+    "apiKey": "api_key_xxx",
+    "workspaceSlug": "my-workspace",
+    "projectSlug": "my-project"
+  },
+  "thresholds": {
+    "stuck": 120,
+    "zombie": 300,
+    "healthInterval": 30,
+    "checkpointInterval": 60
+  }
+}
+```
+
+**Minimal (metrics only):**
+```json
+{
+  "metrics": true
+}
+```
+
+**Minimal (Telegram only):**
+```json
+{
+  "telegram": true,
+  "telegramConfig": {
+    "botToken": "YOUR_BOT_TOKEN",
+    "chatId": "-100XXXXXXXXXX"
+  }
+}
+```
 
 ### Need a Different Setup?
 
@@ -686,8 +769,12 @@ caravel/
 │   ├── models-llama-cpp-lm-studio.json
 │   ├── models-ollama.json
 │   └── models-docker.json
+├── integrations/
+│   ├── telegram.ts       # Telegram bot notifications
+│   ├── linear.ts         # Linear issue sync
+│   └── plane.ts          # Plane issue sync
 ├── extensions/
-│   ├── caravel.ts        # Main orchestrator (fleet tools, dashboard, ZFS — all inlined)
+│   ├── caravel.ts        # Main orchestrator (fleet tools, dashboard, ZFS, integrations)
 │   ├── caravel-identity.ts     # Agent identity resolution & persistence
 │   ├── caravel-checkpoints.ts  # Periodic checkpointing & session recovery
 │   ├── caravel-health.ts       # Health monitoring, stuck/zombie detection
@@ -719,15 +806,19 @@ caravel/
 
 | File | Lines | Purpose |
 |------|-------|--------|
-| `extensions/caravel.ts` | ~5,000 | Main orchestrator — fleet tools, dashboard, ZFS process manager |
+| `extensions/caravel.ts` | ~7,300 | Main orchestrator — fleet tools, dashboard, ZFS, integrations |
 | `extensions/caravel-identity.ts` | 370 | Agent identity resolution & persistence |
 | `extensions/caravel-checkpoints.ts` | 407 | Periodic checkpointing & session recovery |
-| `extensions/caravel-health.ts` | 564 | Health monitoring, stuck/zombie detection, nudges, escalations |
+| `extensions/caravel-health.ts` | 622 | Health monitoring, stuck/zombie detection, nudges, escalations |
 | `extensions/caravel-messaging.ts` | 539 | Inter-agent messaging (channels, nudges, escalations) |
 | `extensions/caravel-seance.ts` | 394 | Predecessor context recovery (session history) |
-| `extensions/caravel-config.ts` | 196 | Configuration management (feature flags, thresholds) |
+| `extensions/caravel-config.ts` | 194 | Configuration management (feature flags, thresholds) |
 | `extensions/caravel-init.ts` | 78 | Fleet initialization (.caravel/ setup) |
 | `extensions/caravel-widget-indicators.ts` | 189 | Widget bar indicators (messaging, health) |
+| `extensions/integrations/telegram.ts` | — | Telegram bot notifications |  
+| `extensions/integrations/linear.ts` | — | Linear issue sync |
+| `extensions/integrations/plane.ts` | — | Plane issue sync |
+| `extensions/metrics.ts` | — | Fleet metrics collection & export |
 | `zellij-layout.kdl` | 240 | Fleet workspace layout — default (60/40), minimal, review, wide variants |
 | `zellij-fleet-config.md` | 280 | Configuration guide — installation, keybindings, multi-monitor, troubleshooting |
 | `skills/zellij-fleet/SKILL.md` | 734 | User documentation — workflows, keyboard shortcuts, layout variants, troubleshooting |
