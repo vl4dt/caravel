@@ -1154,10 +1154,11 @@ class ZFS {
     try { fs.writeFileSync(tmpLayout, kdlContent, "utf-8"); } catch { return { success: false, message: "Failed to write layout file." }; }
     await this.killSession(this.sessionName);
     // zellij has no "session create" subcommand — use top-level -s + --layout
-    const proc = spawn(this.platform.shell, [
-      this.platform.shellFlag,
-      `zellij -s ${this.sessionName} --layout "${tmpLayout}"`,
-    ], { cwd: cwd ?? this.cwd, shell: true, stdio: ["ignore", "pipe", "pipe"] });
+    return new Promise((resolve) => {
+      const proc = spawn(this.platform.shell, [
+        this.platform.shellFlag,
+        `zellij -s ${this.sessionName} --layout "${tmpLayout}"`,
+      ], { cwd: cwd ?? this.cwd, shell: true, stdio: ["ignore", "pipe", "pipe"] });
       let stdout = "", stderr = "";
       proc.stdout.on("data", (d: any) => { stdout += d.toString(); });
       proc.stderr.on("data", (d: any) => { stderr += d.toString(); });
