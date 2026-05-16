@@ -51,6 +51,8 @@ import caravelSync, {
   pollLinearSync,
   pollPlaneSync,
   createPhaseFromIssues,
+  createLinearProject,
+  createPlaneProject,
   syncResultToLinear,
   syncResultToPlane,
 } from "./caravel-sync";
@@ -6451,6 +6453,27 @@ Status: idle | ${formatDuration(Date.now() - fleetState.startTime)} elapsed`,
                 if (syncState.processedLinearIssues || syncState.processedPlaneIssues) {
                   const newPhases: FleetPhase[] = [];
 
+                  // Linear: auto-create project for batch of new issues
+                  const newLinearIssues = Object.entries(syncState.processedLinearIssues)
+                    .filter(([_, d]) => !d.phase)
+                    .map(([id]) => linearResult.newIssues.find((i) => i.id === id))
+                    .filter((i): i is NonNullable<typeof i> => !!i);
+
+                  // Auto-create Linear Project if enabled
+                  if (syncConfig.linear.createProjectAutomatically && syncConfig.linear.projectTemplate && newLinearIssues.length > 0) {
+                    const projectDate = new Date().toISOString().slice(0, 10);
+                    const projectName = syncConfig.linear.projectTemplate.name.replace("%DATE%", projectDate);
+                    const projectResult = await createLinearProject(
+                      syncConfig.linear, projectName, syncConfig.linear.teamIds[0],
+                      `Synced ${newLinearIssues.length} issues from Linear on ${projectDate}`,
+                    );
+                    if (projectResult.success && projectResult.projectId) {
+                      results.push(`📁 Created Linear Project "${projectName}"`);
+                    } else if (projectResult.error) {
+                      results.push(`⚠️ Linear project creation failed: ${projectResult.error}`);
+                    }
+                  }
+
                   // Linear: group by project template → one phase per issue
                   for (const [issueId, issueData] of Object.entries(syncState.processedLinearIssues)) {
                     if (!issueData.phase) {
@@ -6481,6 +6504,27 @@ Status: idle | ${formatDuration(Date.now() - fleetState.startTime)} elapsed`,
                       syncState.phaseToSource[newPhase.id] = { system: "linear", projectId: issueId, phase: newPhase.id };
                       _hooksSnapshot!.syncPhaseCreated = true;
                       results.push(`📋 Created phase "${phaseName}" from Linear issue #${issueId}`);
+                    }
+                  }
+
+                  // Plane: auto-create project for batch of new issues
+                  const newPlaneIssues = Object.entries(syncState.processedPlaneIssues)
+                    .filter(([_, d]) => !d.phase)
+                    .map(([id]) => planeResult.newIssues.find((i) => i.id === id))
+                    .filter((i): i is NonNullable<typeof i> => !!i);
+
+                  // Auto-create Plane Project if enabled
+                  if (syncConfig.plane.createProjectAutomatically && newPlaneIssues.length > 0) {
+                    const projectDate = new Date().toISOString().slice(0, 10);
+                    const projectIdentifier = `CAR${Math.floor(Math.random() * 9000) + 1000}`;
+                    const projectResult = await createPlaneProject(
+                      syncConfig.plane, `Caravel ${projectDate}`, projectIdentifier,
+                      `Synced ${newPlaneIssues.length} issues from Plane on ${projectDate}`,
+                    );
+                    if (projectResult.success && projectResult.projectId) {
+                      results.push(`📁 Created Plane Project "Caravel ${projectDate}"`);
+                    } else if (projectResult.error) {
+                      results.push(`⚠️ Plane project creation failed: ${projectResult.error}`);
                     }
                   }
 
