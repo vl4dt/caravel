@@ -175,6 +175,7 @@ Caravel includes **9 optional feature extensions**, all disabled by default and 
 | Linear Sync | `integrations/linear.ts` | `linear` | Sync completed tasks to Linear issues |
 | Plane Sync | `integrations/plane.ts` | `plane` | Sync completed tasks to Plane issues |
 | Metrics Collection | `metrics.ts` | `metrics` | Per-phase/task metrics export (JSON/CSV) |
+| Bidirectional Sync | `caravel-sync.ts` | `sync` | Poll Linear/Plane for To Do issues → create phases; push results back |
 
 **All features are opt-in.** Set the corresponding key to `true` in `.caravel/config.json` to enable each feature.
 
@@ -375,6 +376,33 @@ Access is denied
 → Verify `planeConfig.workspaceSlug` matches a real Plane workspace.
 → Check Plane API response in server logs.
 
+**Sync not picking up issues (Linear/Plane):**
+→ Verify `sync: true` and `linear: true` or `plane: true` in config.
+→ Check `linearConfig.apiKey` / `planeConfig.apiKey` are valid.
+→ Verify `linearConfig.teamIds` matches your Linear team IDs.
+→ Verify `planeConfig.workspaceSlug` matches your Plane workspace.
+→ Check `.caravel/sync-state.json` — if issues appear there, they're already processed.
+→ Sync polls every 60s (default) — wait for the next poll cycle.
+→ Check server logs for `[caravel-sync]` messages.
+
+**Sync not creating phases:**
+→ Ensure `sync: true` is set (not just `linear`/`plane` which are for one-way sync only).
+→ Check that issues in Linear/Plane are in the correct "To Do" state.
+→ Linear state type must be "todo" — check with `list-states`.
+→ Plane state must be "unstarted" (default) or configured in `planeConfig.stateFilter`.
+
+**Linear sync failing:**
+→ Verify `linearConfig.apiKey` is a valid personal API key from Linear Settings > API.
+→ Verify `linearConfig.teamIds` has correct team UUIDs.
+→ Check Linear API response in server logs.
+→ Linear GraphQL queries may require specific state IDs — check `linearConfig.projectTemplate.stateId`.
+
+**Plane sync failing:**
+→ Verify `planeConfig.apiKey` is valid.
+→ Verify `planeConfig.workspaceSlug` matches the workspace URL.
+→ Check Plane API response in server logs.
+→ If using self-hosted Plane, set `planeConfig.baseUrl` to your Plane URL.
+
 **Metrics not exported:**
 → Verify `metrics: true` in config.
 → Check `.caravel/metrics-{timestamp}.json` after phase completion.
@@ -536,6 +564,34 @@ Enable integrations in `.caravel/config.json`:
   "telegramConfig": {
     "botToken": "YOUR_BOT_TOKEN",
     "chatId": "-100XXXXXXXXXX"
+  }
+}
+```
+
+**Bidirectional Sync (Linear + Plane):**
+```json
+{
+  "sync": true,
+  "linear": true,
+  "plane": true,
+  "linearConfig": {
+    "apiKey": "lin_api_xxx",
+    "teamIds": ["TEAM_ID_HERE"],
+    "projectTemplate": {
+      "name": "Caravel-%DATE%",
+      "description": "Auto-created by Caravel fleet",
+      "stateId": ""
+    },
+    "pollIntervalSec": 60,
+    "createProjectAutomatically": true
+  },
+  "planeConfig": {
+    "apiKey": "plane_api_key",
+    "baseUrl": "https://app.plane.so",
+    "workspaceSlug": "my-workspace",
+    "stateFilter": "unstarted",
+    "pollIntervalSec": 60,
+    "createProjectAutomatically": true
   }
 }
 ```
@@ -775,6 +831,7 @@ caravel/
 │   └── plane.ts          # Plane issue sync
 ├── extensions/
 │   ├── caravel.ts        # Main orchestrator (fleet tools, dashboard, ZFS, integrations)
+│   ├── caravel.ts        # Main orchestrator (fleet tools, dashboard, ZFS, integrations)
 │   ├── caravel-identity.ts     # Agent identity resolution & persistence
 │   ├── caravel-checkpoints.ts  # Periodic checkpointing & session recovery
 │   ├── caravel-health.ts       # Health monitoring, stuck/zombie detection
@@ -819,6 +876,7 @@ caravel/
 | `extensions/integrations/linear.ts` | — | Linear issue sync |
 | `extensions/integrations/plane.ts` | — | Plane issue sync |
 | `extensions/metrics.ts` | — | Fleet metrics collection & export |
+| `extensions/caravel-sync.ts` | — | Bidirectional sync engine — poll Linear/Plane, create phases, push results |
 | `zellij-layout.kdl` | 240 | Fleet workspace layout — default (60/40), minimal, review, wide variants |
 | `zellij-fleet-config.md` | 280 | Configuration guide — installation, keybindings, multi-monitor, troubleshooting |
 | `skills/zellij-fleet/SKILL.md` | 734 | User documentation — workflows, keyboard shortcuts, layout variants, troubleshooting |

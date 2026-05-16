@@ -475,6 +475,48 @@ Collects per-phase/task metrics (duration, tokens, review cycles, pass/fail rate
 - `.caravel/metrics-{timestamp}.json` — structured JSON
 - `.caravel/metrics-{timestamp}.csv` — spreadsheet-compatible CSV
 
+### Bidirectional Sync (Linear + Plane)
+
+The **sync** feature polls Linear and Plane for issues moved to "To Do" state, creates Caravel phases/tasks from them, and pushes results back as comments with status updates.
+
+**Setup:**
+
+```json
+{
+  "sync": true,
+  "linear": true,
+  "plane": true,
+  "linearConfig": {
+    "apiKey": "lin_api_xxx",
+    "teamIds": ["TEAM_ID"],
+    "projectTemplate": {
+      "name": "Caravel-%DATE%",
+      "description": "Auto-created by Caravel fleet",
+      "stateId": ""
+    }
+  },
+  "planeConfig": {
+    "apiKey": "plane_api_key",
+    "baseUrl": "https://app.plane.so",
+    "workspaceSlug": "my-workspace"
+  }
+}
+```
+
+**What it does:**
+
+1. **Polling** — Every 60s (configurable), polls Linear for issues in "todo" state and Plane for issues in "unstarted" state
+2. **Phase creation** — Each new issue gets a Caravel phase with rich description including original title, description, and implementation checklist
+3. **Task creation** — Each issue creates one task per developer agent with a detailed task brief
+4. **Result pushback** — On phase complete/failed: updates the issue state and adds a comment with outcome (tasks succeeded/failed, details)
+5. **State tracking** — `.caravel/sync-state.json` maps external issue IDs ↔ Caravel phase IDs to avoid duplicates
+6. **Auto-project creation** — Can auto-create Linear Projects and Plane Projects for each batch of synced issues
+7. **Rich descriptions** — Each task gets a rich description with original issue context, implementation checklist, and source attribution
+
+**Sync state file:** `.caravel/sync-state.json` — tracks which issues have been processed and their corresponding Caravel phases.
+
+**Sync config file:** `.caravel/sync-config.json` — configuration for Linear and Plane sync.
+
 ## ZFS Mode — Zellij Fleet Session
 
 Caravel can run the fleet inside a dedicated [Zellij](https://zellij.dev) terminal multiplexer for a full terminal-based fleet workspace.

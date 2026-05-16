@@ -45,6 +45,15 @@ import { sendTelegramNotification } from "./integrations/telegram";
 import { syncTaskToLinear } from "./integrations/linear";
 import { syncTaskToPlane } from "./integrations/plane";
 import { createFleetMetrics } from "./metrics";
+import caravelSync, {
+  loadSyncState,
+  loadSyncConfig,
+  pollLinearSync,
+  pollPlaneSync,
+  createPhaseFromIssues,
+  syncResultToLinear,
+  syncResultToPlane,
+} from "./caravel-sync";
 
 // ============================================================================
 // Feature Configuration ──────────────────────────────────────────────────────
@@ -76,6 +85,8 @@ interface FeatureConfig {
   plane: boolean;
   /** Enable/disable metrics collection. */
   metrics: boolean;
+  /** Enable/disable bidirectional sync with Linear/Plane (poll issues, create phases, push results). */
+  sync: boolean;
 }
 
 const defaultFeatureConfig: FeatureConfig = {
@@ -89,6 +100,7 @@ const defaultFeatureConfig: FeatureConfig = {
   linear: false,
   plane: false,
   metrics: false,
+  sync: false,
 };
 
 let featureConfig: FeatureConfig = { ...defaultFeatureConfig };
@@ -105,6 +117,7 @@ export function setAllFeatures(enabled: boolean): void {
   featureConfig.linear = enabled;
   featureConfig.plane = enabled;
   featureConfig.metrics = enabled;
+  featureConfig.sync = enabled;
 }
 
 /** Get a deep copy of the current feature configuration. */
@@ -221,6 +234,15 @@ export function isMetricsFeatureEnabled(): boolean {
   return featureConfig.metrics;
 }
 
+/** Enable or disable bidirectional sync (Linear/Plane poll + phase creation + result pushback). */
+export function setSyncFeature(enabled: boolean): void {
+  featureConfig.sync = enabled;
+}
+
+export function isSyncFeatureEnabled(): boolean {
+  return featureConfig.sync;
+}
+
 /**
  * Enable or disable messaging indicators in the widget bar.
  *
@@ -264,6 +286,16 @@ export interface FeatureHooksSnapshot {
   planeSynced: boolean;
   /** Hook 8 (Metrics): fleet metrics collected. */
   metricsCollected: boolean;
+  /** Hook 9 (Sync): linear issues polled. */
+  linearSyncPoll: boolean;
+  /** Hook 9 (Sync): plane issues polled. */
+  planeSyncPoll: boolean;
+  /** Hook 10 (Sync): phase created from external issues. */
+  syncPhaseCreated: boolean;
+  /** Hook 11 (Sync): results pushed back to Linear. */
+  linearResultPushed: boolean;
+  /** Hook 12 (Sync): results pushed back to Plane. */
+  planeResultPushed: boolean;
   /** Feature config state at the time each hook fired. */
   configSnapshot: FeatureConfig;
 }
@@ -284,6 +316,11 @@ export function resetHooksSnapshot(): void {
     linearSynced: false,
     planeSynced: false,
     metricsCollected: false,
+    linearSyncPoll: false,
+    planeSyncPoll: false,
+    syncPhaseCreated: false,
+    linearResultPushed: false,
+    planeResultPushed: false,
     configSnapshot: getFeatureConfig(),
   };
 }
@@ -3577,6 +3614,32 @@ function onPhaseComplete(phaseIdx: number, ctx: ExtensionContext): void {
   } catch {
     // Metrics collection is non-critical
   }
+
+  // ── Sync: Push results back to Linear/Plane ────────────────────────
+  if (featureConfig.sync) {
+    try {
+      const syncState = loadSyncState(ctx.cwd);
+      const syncConfig = loadSyncConfig(ctx.cwd);
+
+      // Push to Linear if enabled
+      if (syncConfig.linear.enabled) {
+        _hooksSnapshot!.linearResultPushed = true;
+        syncResultToLinear(syncConfig.linear, syncState, phase.name, phase.status, phase.tasks.length, phase.tasks.filter((t) => t.status === "complete").length, phase.tasks.filter((t) => t.status === "failed").length).catch(() => {
+          // Sync result pushback is non-critical
+        });
+      }
+
+      // Push to Plane if enabled
+      if (syncConfig.plane.enabled) {
+        _hooksSnapshot!.planeResultPushed = true;
+        syncResultToPlane(syncConfig.plane, syncState, phase.name, phase.status, phase.tasks.length, phase.tasks.filter((t) => t.status === "complete").length, phase.tasks.filter((t) => t.status === "failed").length).catch(() => {
+          // Sync result pushback is non-critical
+        });
+      }
+    } catch {
+      // Sync pushback is non-critical
+    }
+  }
 }
 
 // ── Hook 7: Integration triggers (Telegram, Linear, Plane) ─────────────────
@@ -6353,6 +6416,123 @@ Status: idle | ${formatDuration(Date.now() - fleetState.startTime)} elapsed`,
 
             saveState();
             refreshWidget(ctx);
+
+            // ── Hook 9/10: Sync polling (Linear/Plane → Caravel) ─────────
+            if (featureConfig.sync) {
+              try {
+                const syncState = loadSyncState(ctx.cwd);
+                const syncConfig = loadSyncConfig(ctx.cwd);
+
+                // Poll Linear
+                if (syncConfig.linear.enabled) {
+                  const linearResult = await pollLinearSync(syncConfig.linear, syncState, ctx.cwd);
+                  if (linearResult.error) {
+                    results.push(`⚠️ Linear sync poll error: ${linearResult.error}`);
+                  }
+                  if (linearResult.newIssues.length > 0) {
+                    _hooksSnapshot!.linearSyncPoll = true;
+                    results.push(`📥 Found ${linearResult.newIssues.length} new issue(s) from Linear`);
+                  }
+                }
+
+                // Poll Plane
+                if (syncConfig.plane.enabled) {
+                  const planeResult = await pollPlaneSync(syncConfig.plane, syncState, ctx.cwd);
+                  if (planeResult.error) {
+                    results.push(`⚠️ Plane sync poll error: ${planeResult.error}`);
+                  }
+                  if (planeResult.newIssues.length > 0) {
+                    _hooksSnapshot!.planeSyncPoll = true;
+                    results.push(`📥 Found ${planeResult.newIssues.length} new issue(s) from Plane`);
+                  }
+                }
+
+                // Create phases from new issues
+                if (syncState.processedLinearIssues || syncState.processedPlaneIssues) {
+                  const newPhases: FleetPhase[] = [];
+
+                  // Linear: group by project template → one phase per issue
+                  for (const [issueId, issueData] of Object.entries(syncState.processedLinearIssues)) {
+                    if (!issueData.phase) {
+                      const issue = linearResult.newIssues.find((i) => i.id === issueId);
+                      if (!issue) continue;
+
+                      const phaseName = `Linear #${issueId} — ${issue.title.slice(0, 40)}`;
+                      const syncResult = createPhaseFromIssues(
+                        "linear", phaseName, [{ id: issueId, title: issue.title, description: issue.description }],
+                        syncConfig.linear,
+                      );
+
+                      const newPhase: FleetPhase = {
+                        id: `caravel-linear-${issueId}`,
+                        name: phaseName,
+                        status: "pending",
+                        tasks: syncResult.taskIds.map((tid, idx) => ({
+                          id: tid,
+                          agentName: "developer",
+                          description: syncResult.taskDescriptions[idx] || syncResult.taskDescriptions[0] || `Implement: ${issue.title}`,
+                          status: "pending" as const,
+                          reviewCount: 0,
+                          maxReviewCount: 5,
+                        })),
+                      };
+                      newPhases.push(newPhase);
+                      issueData.phase = newPhase.id;
+                      syncState.phaseToSource[newPhase.id] = { system: "linear", projectId: issueId, phase: newPhase.id };
+                      _hooksSnapshot!.syncPhaseCreated = true;
+                      results.push(`📋 Created phase "${phaseName}" from Linear issue #${issueId}`);
+                    }
+                  }
+
+                  // Plane: group by project → one phase per issue
+                  for (const [issueId, issueData] of Object.entries(syncState.processedPlaneIssues)) {
+                    if (!issueData.phase) {
+                      const issue = planeResult.newIssues.find((i) => i.id === issueId);
+                      if (!issue) continue;
+
+                      const phaseName = `Plane #${issueId} — ${issue.name.slice(0, 40)}`;
+                      const syncResult = createPhaseFromIssues(
+                        "plane", phaseName, [{ id: issueId, title: issue.name, description: issue.description }],
+                        syncConfig.plane,
+                      );
+
+                      const newPhase: FleetPhase = {
+                        id: `caravel-plane-${issueId}`,
+                        name: phaseName,
+                        status: "pending",
+                        tasks: syncResult.taskIds.map((tid, idx) => ({
+                          id: tid,
+                          agentName: "developer",
+                          description: syncResult.taskDescriptions[idx] || syncResult.taskDescriptions[0] || `Implement: ${issue.name}`,
+                          status: "pending" as const,
+                          reviewCount: 0,
+                          maxReviewCount: 5,
+                        })),
+                      };
+                      newPhases.push(newPhase);
+                      issueData.phase = newPhase.id;
+                      syncState.phaseToSource[newPhase.id] = { system: "plane", projectId: issueId, phase: newPhase.id };
+                      _hooksSnapshot!.syncPhaseCreated = true;
+                      results.push(`📋 Created phase "${phaseName}" from Plane issue #${issueId}`);
+                    }
+                  }
+
+                  // Insert new phases before the current phase
+                  if (newPhases.length > 0) {
+                    const insertIdx = phaseIndex;
+                    fleetState.phases.splice(insertIdx, 0, ...newPhases);
+                    phaseIndex = insertIdx;
+                    results.push(`🔀 Inserted ${newPhases.length} new phase(s) before current position. Resuming from new phase.`);
+                    saveState();
+                    refreshWidget(ctx);
+                    continue; // Restart the loop with new phases
+                  }
+                }
+              } catch (err) {
+                results.push(`⚠️ Sync poll error: ${(err as Error).message}`);
+              }
+            }
+
             phaseIndex++;
           }
 
